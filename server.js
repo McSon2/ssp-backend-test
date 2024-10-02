@@ -6,11 +6,9 @@ const bodyParser = require("body-parser");
 const axios = require("axios");
 const { MongoClient, ServerApiVersion } = require("mongodb");
 const crypto = require("crypto");
-const multer = require("multer");
 
 // Configuration du serveur Express
 const app = express();
-const upload = multer();
 
 // Middleware pour CORS
 app.use((req, res, next) => {
@@ -20,17 +18,18 @@ app.use((req, res, next) => {
   next();
 });
 
-// Middleware bodyParser pour les autres routes (JSON)
+// Middleware bodyParser pour parser les données JSON
 app.use(bodyParser.json());
 
 // Configuration des clés API et autres informations sensibles
 const PLISIO_API_KEY = process.env.PLISIO_API_KEY;
+const PLISIO_SECRET_KEY = process.env.PLISIO_SECRET_KEY;
 const MONGODB_URI = process.env.MONGODB_URI;
 const BACKEND_URL = process.env.BACKEND_URL;
 const PORT = process.env.PORT;
 
 function verifyCallbackData(data) {
-  if (typeof data === "object" && data.verify_hash && PLISIO_API_KEY) {
+  if (typeof data === "object" && data.verify_hash && PLISIO_SECRET_KEY) {
     // Trier les clés alphabétiquement
     const ordered = Object.keys(data)
       .sort()
@@ -42,7 +41,7 @@ function verifyCallbackData(data) {
         return obj;
       }, {});
     const string = JSON.stringify(ordered);
-    const hmac = crypto.createHmac("sha1", PLISIO_API_KEY);
+    const hmac = crypto.createHmac("sha1", PLISIO_SECRET_KEY);
     hmac.update(string);
     const hash = hmac.digest("hex");
 
@@ -349,7 +348,7 @@ app.post("/create-invoice", async (req, res) => {
     const orderNumber = `${stakeUsername}-${Date.now()}`;
 
     // URL de callback pour Plisio (doit être accessible publiquement)
-    const callbackUrl = `https://${BACKEND_URL}/plisio-callback`;
+    const callbackUrl = `https://${BACKEND_URL}/plisio-callback?json=true`;
 
     const response = await axios.get("https://plisio.net/api/v1/invoices/new", {
       params: {
@@ -401,8 +400,8 @@ app.post("/create-invoice", async (req, res) => {
   }
 });
 
-// Endpoint pour le callback de Plisio
-app.post("/plisio-callback", upload.none(), async (req, res) => {
+// Endpoint pour le callback de Plisio (avec json=true)
+app.post("/plisio-callback", async (req, res) => {
   const data = req.body;
 
   // Log des données reçues
@@ -452,7 +451,7 @@ app.post("/plisio-callback", upload.none(), async (req, res) => {
       } else {
         res.status(404).send("Invoice non trouvée");
       }
-    } else if (status === "expired" || status === "canceled") {
+    } else if (status === "expired" || status === "cancelled") {
       // Remettre à jour le code promo si le paiement n'est pas complété
       const invoice = await Database.getInvoice(order_number);
       if (invoice && invoice.promoCode) {
