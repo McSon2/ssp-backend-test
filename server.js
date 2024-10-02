@@ -45,10 +45,6 @@ function verifyCallbackData(data) {
     hmac.update(string);
     const hash = hmac.digest("hex");
 
-    // Log pour le débogage
-    console.log("Hash calculé:", hash);
-    console.log("Hash reçu:", data.verify_hash);
-
     return hash === data.verify_hash;
   }
   return false;
@@ -403,9 +399,6 @@ app.post("/create-invoice", async (req, res) => {
 // Endpoint pour le callback de Plisio (avec json=true)
 app.post("/plisio-callback", async (req, res) => {
   const data = req.body;
-
-  // Log des données reçues
-  console.log("Callback reçu de Plisio:", data);
 
   // Vérifier l'authenticité du callback
   if (!verifyCallbackData(data)) {
