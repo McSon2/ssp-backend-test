@@ -4,7 +4,8 @@
     "body-parser": "^1.20.3",
     "crypto": "^1.0.1",
     "express": "^4.21.0",
-    "mongodb": "^6.9.0"
+    "mongodb": "^6.9.0",
+    "multer": "^1.4.5-lts.1"
   },
   "name": "ssp_backend",
   "version": "1.0.0",

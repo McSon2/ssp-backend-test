@@ -6,36 +6,22 @@ const bodyParser = require("body-parser");
 const axios = require("axios");
 const { MongoClient, ServerApiVersion } = require("mongodb");
 const crypto = require("crypto");
+const multer = require("multer");
 
 // Configuration du serveur Express
 const app = express();
-app.use(bodyParser.json());
+const upload = multer();
 
-// Configuration de CORS si nécessaire
+// Middleware pour CORS
 app.use((req, res, next) => {
   res.header("Access-Control-Allow-Origin", "*"); // Remplacez '*' par l'URL de votre frontend en production
   res.header("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
   res.header("Access-Control-Allow-Headers", "Content-Type, Authorization");
-  console.log("Headers:", req.headers);
-  let data = "";
-  req.on("data", (chunk) => {
-    data += chunk;
-  });
-  req.on("end", () => {
-    console.log("Raw Body:", data);
-    if (data) {
-      try {
-        req.body = JSON.parse(data);
-      } catch (e) {
-        // Si JSON.parse échoue, essayez de parser comme URL-encoded
-        const qs = require("querystring");
-        req.body = qs.parse(data);
-      }
-    }
-  });
-
   next();
 });
+
+// Middleware bodyParser pour les autres routes (JSON)
+app.use(bodyParser.json());
 
 // Configuration des clés API et autres informations sensibles
 const PLISIO_API_KEY = process.env.PLISIO_API_KEY;
@@ -49,10 +35,12 @@ function verifyCallbackData(data) {
     const ordered = Object.keys(data)
       .sort()
       .reduce((obj, key) => {
-        obj[key] = data[key];
+        if (key !== "verify_hash") {
+          // S'assurer que verify_hash est exclu
+          obj[key] = data[key];
+        }
         return obj;
       }, {});
-    delete ordered.verify_hash;
     const string = JSON.stringify(ordered);
     const hmac = crypto.createHmac("sha1", PLISIO_API_KEY);
     hmac.update(string);
@@ -414,17 +402,17 @@ app.post("/create-invoice", async (req, res) => {
 });
 
 // Endpoint pour le callback de Plisio
-app.post("/plisio-callback", async (req, res) => {
+app.post("/plisio-callback", upload.none(), async (req, res) => {
   const data = req.body;
 
   // Log des données reçues
   console.log("Callback reçu de Plisio:", data);
 
   // Vérifier l'authenticité du callback
-  //if (!verifyCallbackData(data)) {
-  //  console.error("Données de callback invalides");
-  // return res.status(422).send("Données de callback invalides");
-  //}
+  if (!verifyCallbackData(data)) {
+    console.error("Données de callback invalides");
+    return res.status(422).send("Données de callback invalides");
+  }
 
   const { txn_id, status, order_number } = data;
 
@@ -464,7 +452,7 @@ app.post("/plisio-callback", async (req, res) => {
       } else {
         res.status(404).send("Invoice non trouvée");
       }
-    } else if (status === "expired" || status === "cancelled") {
+    } else if (status === "expired" || status === "canceled") {
       // Remettre à jour le code promo si le paiement n'est pas complété
       const invoice = await Database.getInvoice(order_number);
       if (invoice && invoice.promoCode) {
