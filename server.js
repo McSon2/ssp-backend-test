@@ -343,7 +343,7 @@ app.post("/create-invoice", async (req, res) => {
     const orderNumber = `${stakeUsername}-${Date.now()}`;
 
     // URL de callback pour Plisio (doit être accessible publiquement)
-    const callbackUrl = `${BACKEND_URL}/plisio-callback`;
+    const callbackUrl = `https://${BACKEND_URL}/plisio-callback`;
 
     const response = await axios.get("https://plisio.net/api/v1/invoices/new", {
       params: {
