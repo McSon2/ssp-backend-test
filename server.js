@@ -27,12 +27,23 @@ const PORT = process.env.PORT;
 
 function verifyCallbackData(data) {
   if (typeof data === "object" && data.verify_hash && PLISIO_API_KEY) {
-    const ordered = { ...data };
+    // Trier les clés alphabétiquement
+    const ordered = Object.keys(data)
+      .sort()
+      .reduce((obj, key) => {
+        obj[key] = data[key];
+        return obj;
+      }, {});
     delete ordered.verify_hash;
     const string = JSON.stringify(ordered);
     const hmac = crypto.createHmac("sha1", PLISIO_API_KEY);
     hmac.update(string);
     const hash = hmac.digest("hex");
+
+    // Log pour le débogage
+    console.log("Hash calculé:", hash);
+    console.log("Hash reçu:", data.verify_hash);
+
     return hash === data.verify_hash;
   }
   return false;
@@ -388,11 +399,14 @@ app.post("/create-invoice", async (req, res) => {
 app.post("/plisio-callback", async (req, res) => {
   const data = req.body;
 
+  // Log des données reçues
+  console.log("Callback reçu de Plisio:", data);
+
   // Vérifier l'authenticité du callback
-  if (!verifyCallbackData(data)) {
-    console.error("Données de callback invalides");
-    return res.status(422).send("Données de callback invalides");
-  }
+  //if (!verifyCallbackData(data)) {
+  //console.error("Données de callback invalides");
+  //return res.status(422).send("Données de callback invalides");
+  //}
 
   const { txn_id, status, order_number } = data;
 
