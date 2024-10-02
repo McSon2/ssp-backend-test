@@ -403,10 +403,10 @@ app.post("/plisio-callback", async (req, res) => {
   console.log("Callback reçu de Plisio:", data);
 
   // Vérifier l'authenticité du callback
-  //if (!verifyCallbackData(data)) {
-  //console.error("Données de callback invalides");
-  //return res.status(422).send("Données de callback invalides");
-  //}
+  if (!verifyCallbackData(data)) {
+    console.error("Données de callback invalides");
+    return res.status(422).send("Données de callback invalides");
+  }
 
   const { txn_id, status, order_number } = data;
 
