@@ -5,6 +5,7 @@ const express = require("express");
 const bodyParser = require("body-parser");
 const axios = require("axios");
 const { MongoClient, ServerApiVersion } = require("mongodb");
+const crypto = require("crypto");
 
 // Configuration du serveur Express
 const app = express();
@@ -23,6 +24,19 @@ const PLISIO_API_KEY = process.env.PLISIO_API_KEY;
 const MONGODB_URI = process.env.MONGODB_URI;
 const BACKEND_URL = process.env.BACKEND_URL;
 const PORT = process.env.PORT;
+
+function verifyCallbackData(data) {
+  if (typeof data === "object" && data.verify_hash && PLISIO_API_KEY) {
+    const ordered = { ...data };
+    delete ordered.verify_hash;
+    const string = JSON.stringify(ordered);
+    const hmac = crypto.createHmac("sha1", PLISIO_API_KEY);
+    hmac.update(string);
+    const hash = hmac.digest("hex");
+    return hash === data.verify_hash;
+  }
+  return false;
+}
 
 // Montants de base pour les abonnements
 const baseAmounts = {
@@ -64,8 +78,149 @@ class DatabaseManager {
     this.promos = this.db.collection("promos");
   }
 
-  // ... (méthodes de DatabaseManager)
-  // Les méthodes addUser, getUser, updateUserSubscription, createInvoice, updateInvoiceStatus, getInvoice, verifyPromoCode, revertPromoCode, close restent inchangées.
+  async addUser(
+    stakeUsername,
+    subscriptionType,
+    subscriptionStart,
+    subscriptionEnd
+  ) {
+    await this.connect();
+    const result = await this.users.insertOne({
+      stake_username: stakeUsername,
+      subscription_type: subscriptionType,
+      subscription_start: new Date(subscriptionStart),
+      subscription_end: new Date(subscriptionEnd),
+    });
+    return result.insertedId;
+  }
+
+  async getUser(stakeUsername) {
+    await this.connect();
+    return await this.users.findOne({
+      stake_username: { $regex: new RegExp(`^${stakeUsername}$`, "i") },
+    });
+  }
+
+  async updateUserSubscription(
+    stakeUsername,
+    subscriptionType,
+    subscriptionEnd
+  ) {
+    await this.connect();
+    const result = await this.users.updateOne(
+      { stake_username: { $regex: new RegExp(`^${stakeUsername}$`, "i") } },
+      {
+        $set: {
+          subscription_type: subscriptionType,
+          subscription_end: new Date(subscriptionEnd),
+        },
+      }
+    );
+    return result.modifiedCount;
+  }
+
+  async createInvoice(
+    txnId,
+    orderNumber,
+    stakeUsername,
+    subscriptionType,
+    amount,
+    currency,
+    status,
+    promoCode
+  ) {
+    await this.connect();
+    const result = await this.invoices.insertOne({
+      txn_id: txnId,
+      order_number: orderNumber,
+      stake_username: stakeUsername,
+      subscription_type: subscriptionType,
+      amount: amount,
+      currency: currency,
+      status: status,
+      promoCode: promoCode,
+      created_at: new Date(),
+    });
+    return result.insertedId;
+  }
+
+  async updateInvoiceStatus(orderNumber, status, txnId) {
+    await this.connect();
+    const result = await this.invoices.updateOne(
+      { order_number: orderNumber },
+      {
+        $set: {
+          status: status,
+          txn_id: txnId,
+          updated_at: new Date(),
+        },
+      }
+    );
+    return result.modifiedCount;
+  }
+
+  async getInvoice(orderNumber) {
+    await this.connect();
+    const invoice = await this.invoices.findOne({ order_number: orderNumber });
+    return invoice;
+  }
+
+  async verifyPromoCode(promoCode, subscriptionType) {
+    await this.connect();
+    const promo = await this.promos.findOne({ code: promoCode });
+
+    if (!promo) {
+      return { isValid: false, message: "Code promo invalide." };
+    }
+
+    const now = new Date();
+    if (now > promo.expirationDate) {
+      return { isValid: false, message: "Ce code promo a expiré." };
+    }
+
+    if (promo.usageLimit <= 0) {
+      return {
+        isValid: false,
+        message: "Ce code promo a atteint sa limite d'utilisation.",
+      };
+    }
+
+    // Vérifier si le code promo s'applique au type d'abonnement sélectionné
+    if (!promo.applicableDurations.includes(subscriptionType)) {
+      return {
+        isValid: false,
+        message:
+          "Ce code promo n'est pas applicable pour la durée d'abonnement sélectionnée.",
+      };
+    }
+
+    return { isValid: true, discount: promo.discount };
+  }
+
+  async usePromoCode(promoCode) {
+    await this.connect();
+    const result = await this.promos.updateOne(
+      { code: promoCode },
+      { $inc: { usageLimit: -1 } }
+    );
+    return result.modifiedCount === 1;
+  }
+
+  async revertPromoCode(promoCode) {
+    await this.connect();
+    const result = await this.promos.updateOne(
+      { code: promoCode },
+      { $inc: { usageLimit: 1 } }
+    );
+    return result.modifiedCount === 1;
+  }
+
+  async close() {
+    if (this.isConnected) {
+      await this.client.close();
+      this.isConnected = false;
+    }
+  }
 }
 
 // Instancier le DatabaseManager
@@ -168,6 +323,7 @@ app.post("/create-invoice", async (req, res) => {
       );
       if (promoResult.isValid) {
         amount *= 1 - promoResult.discount;
+        await Database.usePromoCode(promoCode);
       } else {
         return res.json({ success: false, message: promoResult.message });
       }
@@ -211,6 +367,9 @@ app.post("/create-invoice", async (req, res) => {
         invoiceUrl: invoiceData.invoice_url,
       });
     } else {
+      if (appliedPromo) {
+        await Database.revertPromoCode(appliedPromo);
+      }
       res.json({
         success: false,
         message: "Échec de la création de l'invoice Plisio.",
@@ -218,6 +377,9 @@ app.post("/create-invoice", async (req, res) => {
     }
   } catch (error) {
     console.error("Erreur lors de la création de l'invoice :", error);
+    if (promoCode) {
+      await Database.revertPromoCode(promoCode);
+    }
     res.status(500).json({ message: "Erreur interne du serveur." });
   }
 });
@@ -226,8 +388,11 @@ app.post("/create-invoice", async (req, res) => {
 app.post("/plisio-callback", async (req, res) => {
   const data = req.body;
 
-  // Si aucune clé secrète n'est fournie, nous ne pouvons pas vérifier l'authenticité du callback
-  // Soyez conscient des risques de sécurité
+  // Vérifier l'authenticité du callback
+  if (!verifyCallbackData(data)) {
+    console.error("Données de callback invalides");
+    return res.status(422).send("Données de callback invalides");
+  }
 
   const { txn_id, status, order_number } = data;
 
@@ -267,6 +432,13 @@ app.post("/plisio-callback", async (req, res) => {
       } else {
         res.status(404).send("Invoice non trouvée");
       }
+    } else if (status === "expired" || status === "cancelled") {
+      // Remettre à jour le code promo si le paiement n'est pas complété
+      const invoice = await Database.getInvoice(order_number);
+      if (invoice && invoice.promoCode) {
+        await Database.revertPromoCode(invoice.promoCode);
+      }
+      res.status(200).send(`Statut du paiement : ${status}`);
     } else {
       res.status(200).send(`Statut du paiement : ${status}`);
     }
