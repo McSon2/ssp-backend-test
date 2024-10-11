@@ -115,6 +115,18 @@ class DatabaseManager {
     });
   }
 
+  async countValidAffiliates(referralUsername) {
+    await this.connect();
+    const now = new Date();
+
+    const count = await this.users.countDocuments({
+      referral_username: { $regex: new RegExp(`^${referralUsername}$`, "i") },
+      subscription_end: { $gte: now },
+    });
+
+    return count;
+  }
+
   async updateUserSubscription(
     stakeUsername,
     subscriptionType,
@@ -283,11 +295,16 @@ app.post("/verify-user", async (req, res) => {
       const now = new Date();
       const subscriptionEnd = new Date(user.subscription_end);
 
+      const affiliateNumber = await Database.countValidAffiliates(
+        stakeUsername
+      );
+
       if (now <= subscriptionEnd) {
         // Préparer la réponse
         const response = {
           isValid: true,
           message: `Bienvenue, ${stakeUsername} ! Votre abonnement est valide jusqu'au ${subscriptionEnd.toLocaleDateString()}.`,
+          affiliateNumber: affiliateNumber,
         };
 
         // Inclure referralUsername s'il existe
@@ -301,6 +318,7 @@ app.post("/verify-user", async (req, res) => {
           isValid: false,
           message: `Votre abonnement a expiré le ${subscriptionEnd.toLocaleDateString()}. Veuillez le renouveler.`,
           needsRenewal: true,
+          affiliateNumber: affiliateNumber,
         };
 
         if (user.referral_username) {
@@ -314,6 +332,7 @@ app.post("/verify-user", async (req, res) => {
         isValid: false,
         message: `Bienvenue, ${stakeUsername} ! Veuillez vous abonner pour utiliser l'application.`,
         needsSubscription: true,
+        affiliateNumber: 0,
       });
     }
   } catch (error) {
@@ -352,6 +371,23 @@ app.post("/apply-promo", async (req, res) => {
   }
 });
 
+function calculateAffiliateDiscount(affiliateNumber) {
+  let discount = 0;
+
+  for (let i = 1; i <= affiliateNumber; i++) {
+    if (i >= 1 && i <= 9) {
+      discount += 1; // 1% par affilié de 1 à 9
+    } else if (i >= 10 && i <= 19) {
+      discount += 2; // 2% par affilié de 10 à 19
+    } else if (i >= 20 && i <= 29) {
+      discount += 3; // 3% par affilié de 20 à 29
+    }
+    // Vous pouvez ajouter d'autres paliers si nécessaire
+  }
+
+  return discount;
+}
+
 // Endpoint pour créer une invoice Plisio
 app.post("/create-invoice", async (req, res) => {
   const {
@@ -365,65 +401,113 @@ app.post("/create-invoice", async (req, res) => {
   try {
     let amount = baseAmounts[subscriptionType];
 
+    // Appliquer la réduction basée sur les affiliés
+    const affiliateNumber = await Database.countValidAffiliates(stakeUsername);
+    const discountFromAffiliates = calculateAffiliateDiscount(affiliateNumber);
+
+    // Appliquer la réduction du code promo s'il y en a un
+    let totalDiscount = 0;
     if (promoCode) {
       const promoResult = await Database.verifyPromoCode(
         promoCode,
         subscriptionType
       );
       if (promoResult.isValid) {
-        amount *= 1 - promoResult.discount;
+        totalDiscount += promoResult.discount * 100; // Convertir en pourcentage
         await Database.usePromoCode(promoCode);
       } else {
         return res.json({ success: false, message: promoResult.message });
       }
     }
 
-    const orderNumber = `${stakeUsername}-${Date.now()}`;
+    // Ajouter la réduction des affiliés
+    totalDiscount += discountFromAffiliates;
 
-    // URL de callback pour Plisio (doit être accessible publiquement)
-    const callbackUrl = `https://${BACKEND_URL}/plisio-callback?json=true`;
+    // Vérifier si la réduction totale atteint ou dépasse 89%
+    if (totalDiscount >= 89) {
+      // Ajouter un mois d'abonnement à l'utilisateur sans créer d'invoice
+      const subscriptionEnd = calculateSubscriptionEnd(subscriptionType);
 
-    const response = await axios.get("https://plisio.net/api/v1/invoices/new", {
-      params: {
-        source_currency: "USD",
-        source_amount: amount,
-        currency: currency,
-        order_number: orderNumber,
-        order_name: `Subscription ${subscriptionType}`,
-        email: "customer@example.com",
-        callback_url: callbackUrl,
-        api_key: PLISIO_API_KEY,
-      },
-    });
+      const user = await Database.getUser(stakeUsername);
 
-    if (response.data.status === "success") {
-      const invoiceData = response.data.data;
+      if (user) {
+        // Mettre à jour l'abonnement de l'utilisateur
+        await Database.updateUserSubscription(
+          stakeUsername,
+          subscriptionType,
+          subscriptionEnd,
+          referralUsername
+        );
+      } else {
+        // Ajouter un nouvel utilisateur
+        await Database.addUser(
+          stakeUsername,
+          subscriptionType,
+          new Date(),
+          subscriptionEnd,
+          referralUsername
+        );
+      }
 
-      // Enregistrer l'invoice dans la base de données
-      await Database.createInvoice(
-        invoiceData.txn_id,
-        orderNumber,
-        stakeUsername,
-        subscriptionType,
-        invoiceData.invoice_total_sum,
-        currency,
-        "pending",
-        promoCode,
-        referralUsername
-      );
-
-      res.json({
+      return res.json({
         success: true,
-        invoiceUrl: invoiceData.invoice_url,
+        message:
+          "Félicitations ! Vous avez obtenu un mois d'abonnement gratuit grâce à vos affiliés.",
       });
     } else {
-      if (appliedPromo) {
-        await Database.revertPromoCode(appliedPromo);
+      // Calculer le montant après réduction
+      amount *= 1 - totalDiscount / 100;
+
+      const orderNumber = `${stakeUsername}-${Date.now()}`;
+
+      // URL de callback pour Plisio (doit être accessible publiquement)
+      const callbackUrl = `https://${BACKEND_URL}/plisio-callback?json=true`;
+
+      const response = await axios.get(
+        "https://plisio.net/api/v1/invoices/new",
+        {
+          params: {
+            source_currency: "USD",
+            source_amount: amount,
+            currency: currency,
+            order_number: orderNumber,
+            order_name: `Subscription ${subscriptionType}`,
+            email: "customer@example.com",
+            callback_url: callbackUrl,
+            api_key: PLISIO_API_KEY,
+          },
+        }
+      );
+
+      if (response.data.status === "success") {
+        const invoiceData = response.data.data;
+
+        // Enregistrer l'invoice dans la base de données
+        await Database.createInvoice(
+          invoiceData.txn_id,
+          orderNumber,
+          stakeUsername,
+          subscriptionType,
+          invoiceData.invoice_total_sum,
+          currency,
+          "pending",
+          promoCode,
+          referralUsername
+        );
+
+        res.json({
+          success: true,
+          invoiceUrl: invoiceData.invoice_url,
+        });
+      } else {
+        if (promoCode) {
+          await Database.revertPromoCode(promoCode);
+        }
+        res.json({
+          success: false,
+          message: "Échec de la création de l'invoice Plisio.",
+        });
       }
-      res.json({
-        success: false,
-        message: "Échec de la création de l'invoice Plisio.",
-      });
     }
   } catch (error) {
     console.error("Erreur lors de la création de l'invoice :", error);
