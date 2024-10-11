@@ -586,6 +586,56 @@ app.post("/plisio-callback", async (req, res) => {
   }
 });
 
+// Endpoint pour obtenir les prix ajustés
+app.post("/get-adjusted-prices", async (req, res) => {
+  const { stakeUsername, subscriptionType, promoCode } = req.body;
+
+  try {
+    // Récupérer le nombre d'affiliés valides
+    const affiliateNumber = await Database.countValidAffiliates(stakeUsername);
+
+    // Calculer la réduction basée sur les affiliés
+    const discountFromAffiliates = calculateAffiliateDiscount(affiliateNumber);
+
+    // Appliquer la réduction du code promo s'il y en a un
+    let totalDiscount = 0;
+    if (promoCode) {
+      const promoResult = await Database.verifyPromoCode(
+        promoCode,
+        subscriptionType
+      );
+      if (promoResult.isValid) {
+        totalDiscount += promoResult.discount * 100; // Convertir en pourcentage
+      } else {
+        return res.json({ success: false, message: promoResult.message });
+      }
+    }
+
+    // Ajouter la réduction des affiliés
+    totalDiscount += discountFromAffiliates;
+
+    // Calculer les prix ajustés pour chaque type d'abonnement
+    const adjustedPrices = {};
+    for (const [type, baseAmount] of Object.entries(baseAmounts)) {
+      let price = baseAmount * (1 - totalDiscount / 100);
+      // S'assurer que le prix n'est pas négatif
+      price = Math.max(price, 0);
+      adjustedPrices[type] = parseFloat(price.toFixed(2));
+    }
+
+    res.json({
+      success: true,
+      adjustedPrices,
+      affiliateNumber,
+    });
+  } catch (error) {
+    console.error("Erreur lors du calcul des prix ajustés :", error);
+    res
+      .status(500)
+      .json({ success: false, message: "Erreur interne du serveur." });
+  }
+});
+
 // Démarrage du serveur
 app.listen(PORT, async () => {
   // Assurez-vous que la connexion à la base de données est établie
