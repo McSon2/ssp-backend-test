@@ -376,7 +376,7 @@ function calculateAffiliateDiscount(affiliateNumber) {
 
   for (let i = 1; i <= affiliateNumber; i++) {
     if (i >= 1 && i <= 9) {
-      discount += 20; // 1% par affilié de 1 à 9
+      discount += 1; // 1% par affilié de 1 à 9
     } else if (i >= 10 && i <= 19) {
       discount += 2; // 2% par affilié de 10 à 19
     } else if (i >= 20 && i <= 29) {
