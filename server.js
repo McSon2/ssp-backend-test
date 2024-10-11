@@ -94,7 +94,8 @@ class DatabaseManager {
     stakeUsername,
     subscriptionType,
     subscriptionStart,
-    subscriptionEnd
+    subscriptionEnd,
+    referralUsername
   ) {
     await this.connect();
     const result = await this.users.insertOne({
@@ -102,6 +103,7 @@ class DatabaseManager {
       subscription_type: subscriptionType,
       subscription_start: new Date(subscriptionStart),
       subscription_end: new Date(subscriptionEnd),
+      referral_username: referralUsername,
     });
     return result.insertedId;
   }
@@ -116,16 +118,29 @@ class DatabaseManager {
   async updateUserSubscription(
     stakeUsername,
     subscriptionType,
-    subscriptionEnd
+    subscriptionEnd,
+    referralUsername
   ) {
     await this.connect();
+
+    // Préparer les champs à mettre à jour
+    const updateFields = {
+      subscription_type: subscriptionType,
+      subscription_end: new Date(subscriptionEnd),
+    };
+
+    // Récupérer l'utilisateur pour vérifier s'il a déjà un referralUsername
+    const user = await this.getUser(stakeUsername);
+
+    if (!user.referral_username && referralUsername) {
+      // Mettre à jour referralUsername uniquement s'il n'existe pas déjà
+      updateFields.referral_username = referralUsername;
+    }
+
     const result = await this.users.updateOne(
       { stake_username: { $regex: new RegExp(`^${stakeUsername}$`, "i") } },
       {
-        $set: {
-          subscription_type: subscriptionType,
-          subscription_end: new Date(subscriptionEnd),
-        },
+        $set: updateFields,
       }
     );
     return result.modifiedCount;
@@ -139,7 +154,8 @@ class DatabaseManager {
     amount,
     currency,
     status,
-    promoCode
+    promoCode,
+    referralUsername
   ) {
     await this.connect();
     const result = await this.invoices.insertOne({
@@ -151,6 +167,7 @@ class DatabaseManager {
       currency: currency,
       status: status,
       promoCode: promoCode,
+      referralUsername: referralUsername,
       created_at: new Date(),
     });
     return result.insertedId;
@@ -267,16 +284,30 @@ app.post("/verify-user", async (req, res) => {
       const subscriptionEnd = new Date(user.subscription_end);
 
       if (now <= subscriptionEnd) {
-        res.json({
+        // Préparer la réponse
+        const response = {
           isValid: true,
           message: `Bienvenue, ${stakeUsername} ! Votre abonnement est valide jusqu'au ${subscriptionEnd.toLocaleDateString()}.`,
-        });
+        };
+
+        // Inclure referralUsername s'il existe
+        if (user.referral_username) {
+          response.referralUsername = user.referral_username;
+        }
+
+        res.json(response);
       } else {
-        res.json({
+        const response = {
           isValid: false,
           message: `Votre abonnement a expiré le ${subscriptionEnd.toLocaleDateString()}. Veuillez le renouveler.`,
           needsRenewal: true,
-        });
+        };
+
+        if (user.referral_username) {
+          response.referralUsername = user.referral_username;
+        }
+
+        res.json(response);
       }
     } else {
       res.json({
@@ -323,7 +354,13 @@ app.post("/apply-promo", async (req, res) => {
 
 // Endpoint pour créer une invoice Plisio
 app.post("/create-invoice", async (req, res) => {
-  const { stakeUsername, subscriptionType, currency, promoCode } = req.body;
+  const {
+    stakeUsername,
+    subscriptionType,
+    currency,
+    promoCode,
+    referralUsername,
+  } = req.body;
 
   try {
     let amount = baseAmounts[subscriptionType];
@@ -371,7 +408,8 @@ app.post("/create-invoice", async (req, res) => {
         invoiceData.invoice_total_sum,
         currency,
         "pending",
-        promoCode
+        promoCode,
+        referralUsername
       );
 
       res.json({
@@ -421,6 +459,8 @@ app.post("/plisio-callback", async (req, res) => {
           invoice.subscription_type
         );
 
+        const referralUsername = invoice.referralUsername;
+
         const user = await Database.getUser(stakeUsername);
 
         if (user) {
@@ -428,7 +468,8 @@ app.post("/plisio-callback", async (req, res) => {
           await Database.updateUserSubscription(
             stakeUsername,
             invoice.subscription_type,
-            subscriptionEnd
+            subscriptionEnd,
+            referralUsername
           );
         } else {
           // Ajouter un nouvel utilisateur
@@ -436,7 +477,8 @@ app.post("/plisio-callback", async (req, res) => {
             stakeUsername,
             invoice.subscription_type,
             new Date(),
-            subscriptionEnd
+            subscriptionEnd,
+            referralUsername
           );
         }
 
