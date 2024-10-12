@@ -294,16 +294,26 @@ app.post("/verify-user", async (req, res) => {
     if (user) {
       const now = new Date();
       const subscriptionEnd = new Date(user.subscription_end);
+      const type = user.subscription_type;
 
       const affiliateNumber = await Database.countValidAffiliates(
         stakeUsername
       );
 
+      const subscriptionTypeLabels = {
+        "1_month": "1 mois",
+        "3_months": "3 mois",
+        "6_months": "6 mois",
+        "12_months": "12 mois",
+      };
+
+      const typeLabel = subscriptionTypeLabels[type] || type;
+
       if (now <= subscriptionEnd) {
         // Préparer la réponse
         const response = {
           isValid: true,
-          message: `Bienvenue, ${stakeUsername} ! Votre abonnement est valide jusqu'au ${subscriptionEnd.toLocaleDateString()}.`,
+          message: `Your subscription for ${typeLabel} is valid until ${subscriptionEnd.toLocaleDateString()}.`,
           affiliateNumber: affiliateNumber,
         };
 
