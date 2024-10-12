@@ -313,7 +313,7 @@ app.post("/verify-user", async (req, res) => {
         // Préparer la réponse
         const response = {
           isValid: true,
-          message: `Your subscription for ${typeLabel} is valid until ${subscriptionEnd.toLocaleDateString()}.`,
+          message: `Your ${typeLabel} subscription is valid until ${subscriptionEnd.toLocaleDateString()}.`,
           affiliateNumber: affiliateNumber,
         };
 
