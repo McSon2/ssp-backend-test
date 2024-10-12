@@ -315,7 +315,7 @@ app.post("/verify-user", async (req, res) => {
           isValid: true,
           message: `Your subscription for ${typeLabel} is valid until ${subscriptionEnd.toLocaleDateString()}.`,
           affiliateNumber: affiliateNumber,
-          avaibleTrial: false,
+          availableTrial: false,
         };
 
         // Inclure referralUsername s'il existe
@@ -330,7 +330,7 @@ app.post("/verify-user", async (req, res) => {
           message: `Votre abonnement a expiré le ${subscriptionEnd.toLocaleDateString()}. Veuillez le renouveler.`,
           needsRenewal: true,
           affiliateNumber: affiliateNumber,
-          avaibleTrial: false,
+          availableTrial: false,
         };
 
         if (user.referral_username) {
@@ -344,7 +344,7 @@ app.post("/verify-user", async (req, res) => {
         isValid: false,
         message: `Bienvenue, ${stakeUsername} ! Veuillez vous abonner pour utiliser l'application.`,
         needsSubscription: true,
-        avaibleTrial: true,
+        availableTrial: true,
         affiliateNumber: 0,
       });
     }
