@@ -315,6 +315,7 @@ app.post("/verify-user", async (req, res) => {
           isValid: true,
           message: `Your subscription for ${typeLabel} is valid until ${subscriptionEnd.toLocaleDateString()}.`,
           affiliateNumber: affiliateNumber,
+          avaibleTrial: false,
         };
 
         // Inclure referralUsername s'il existe
@@ -329,6 +330,7 @@ app.post("/verify-user", async (req, res) => {
           message: `Votre abonnement a expiré le ${subscriptionEnd.toLocaleDateString()}. Veuillez le renouveler.`,
           needsRenewal: true,
           affiliateNumber: affiliateNumber,
+          avaibleTrial: false,
         };
 
         if (user.referral_username) {
@@ -342,6 +344,7 @@ app.post("/verify-user", async (req, res) => {
         isValid: false,
         message: `Bienvenue, ${stakeUsername} ! Veuillez vous abonner pour utiliser l'application.`,
         needsSubscription: true,
+        avaibleTrial: true,
         affiliateNumber: 0,
       });
     }
@@ -643,6 +646,46 @@ app.post("/get-adjusted-prices", async (req, res) => {
     res
       .status(500)
       .json({ success: false, message: "Erreur interne du serveur." });
+  }
+});
+
+// Endpoint pour demander une période d'essai
+app.post("/request-trial", async (req, res) => {
+  const { stakeUsername } = req.body;
+
+  try {
+    const user = await Database.getUser(stakeUsername);
+
+    if (user) {
+      // L'utilisateur existe déjà, ne pas accorder l'essai
+      res.json({
+        success: false,
+        message:
+          "La période d'essai n'est disponible que pour les nouveaux utilisateurs.",
+      });
+    } else {
+      // Créer un nouvel utilisateur avec un abonnement d'essai
+      const subscriptionStart = new Date();
+      const subscriptionEnd = new Date(subscriptionStart);
+      subscriptionEnd.setDate(subscriptionEnd.getDate() + 2); // Ajouter 2 jours
+
+      await Database.addUser(
+        stakeUsername,
+        "trial",
+        subscriptionStart,
+        subscriptionEnd,
+        null // Pas de referralUsername pour les essais
+      );
+
+      res.json({
+        success: true,
+        message:
+          "Période d'essai activée. Vous pouvez maintenant utiliser l'application pendant 2 jours.",
+      });
+    }
+  } catch (error) {
+    console.error("Erreur lors de la demande d'essai :", error);
+    res.status(500).json({ message: "Erreur interne du serveur." });
   }
 });
 
