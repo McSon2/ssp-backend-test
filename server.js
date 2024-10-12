@@ -450,7 +450,7 @@ app.post("/create-invoice", async (req, res) => {
     totalDiscount += discountFromAffiliates;
 
     // Vérifier si la réduction totale atteint ou dépasse 89%
-    if (totalDiscount >= 89) {
+    if (totalDiscount >= 90) {
       // Ajouter un mois d'abonnement à l'utilisateur sans créer d'invoice
       const subscriptionEnd = calculateSubscriptionEnd(subscriptionType);
 
