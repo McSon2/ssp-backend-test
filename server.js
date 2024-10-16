@@ -501,6 +501,14 @@ app.post("/create-invoice", async (req, res) => {
       // Générer le sign
       const sign = generateCryptomusSign(requestBody, CRYPTOMUS_API_KEY);
 
+      console.log("Request Body:", requestBody);
+      console.log("Generated Sign:", sign);
+      console.log("Headers:", {
+        merchant: CRYPTOMUS_MERCHANT_ID,
+        sign: sign,
+        "Content-Type": "application/json",
+      });
+
       // Envoyer la requête à l'API Cryptomus
       const response = await axios.post(
         "https://api.cryptomus.com/v1/payment",
@@ -546,10 +554,17 @@ app.post("/create-invoice", async (req, res) => {
     }
   } catch (error) {
     console.error("Erreur lors de la création de l'invoice :", error);
-    if (promoCode) {
-      await Database.revertPromoCode(promoCode);
+    if (error.response) {
+      console.error("Response data:", error.response.data);
+      res
+        .status(500)
+        .json({
+          message: "Erreur interne du serveur.",
+          error: error.response.data,
+        });
+    } else {
+      res.status(500).json({ message: "Erreur interne du serveur." });
     }
-    res.status(500).json({ message: "Erreur interne du serveur." });
   }
 });
 
