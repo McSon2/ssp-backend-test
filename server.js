@@ -493,13 +493,9 @@ app.post("/create-invoice", async (req, res) => {
         )
         .digest("hex");
 
-      console.log("Generated Sign:", sign);
-      console.log("Request Body:", requestBody);
-      console.log("Headers:", {
-        merchant: CRYPTOMUS_MERCHANT_ID,
-        sign: sign,
-        "Content-Type": "application/json",
-      });
+      //console.log("Generated Sign:", sign);
+      //console.log("Request Body:", requestBody);
+      //console.log("Headers:", {merchant: CRYPTOMUS_MERCHANT_ID,sign: sign,"Content-Type": "application/json",});
 
       const response = await fetch("https://api.cryptomus.com/v1/payment", {
         method: "POST",
@@ -511,14 +507,14 @@ app.post("/create-invoice", async (req, res) => {
         body: JSON.stringify(requestBody),
       });
 
-      console.log("response", response);
+      //console.log("response", response);
 
       const data = await response.json();
 
-      console.log("data", data);
+      //console.log("data", data);
 
-      if (data.data.state === 0) {
-        const invoiceData = data.data.result;
+      if (data.state === 0) {
+        const invoiceData = data.result;
 
         // Enregistrer l'invoice dans la base de données
         await Database.createInvoice(
@@ -550,10 +546,10 @@ app.post("/create-invoice", async (req, res) => {
   } catch (error) {
     console.error("Erreur lors de la création de l'invoice :", error);
     if (error.data) {
-      console.error("Response data:", error.data.data);
+      console.error("Response data:", error.data);
       res.status(500).json({
         message: "Erreur interne du serveur.",
-        error: error.data.data,
+        error: error.data,
       });
     } else {
       res.status(500).json({ message: "Erreur interne du serveur." });
@@ -563,6 +559,8 @@ app.post("/create-invoice", async (req, res) => {
 
 // Endpoint pour le callback de Cryptomus
 app.post("/cryptomus-callback", async (req, res) => {
+  console.log("Cryptomus callback reçu à :", new Date().toISOString());
+
   const sign = req.body.sign;
 
   if (!sign) {
@@ -573,10 +571,28 @@ app.post("/cryptomus-callback", async (req, res) => {
   // Obtenir le corps brut de la requête
   const rawBody = req.rawBody;
 
+  // Log du corps brut (attention aux données sensibles)
+  console.log("Corps brut de la requête :", rawBody);
+
   // Parser le JSON brut
-  const data = JSON.parse(rawBody);
+  let data;
+  try {
+    data = JSON.parse(rawBody);
+  } catch (parseError) {
+    console.error(
+      "Erreur lors du parsing du corps de la requête :",
+      parseError
+    );
+    return res.status(400).json({ message: "Corps de la requête invalide" });
+  }
+
+  // Supprimer le sign des données pour le calcul
   delete data.sign;
 
+  // Log des données parsées
+  console.log("Données parsées du callback :", data);
+
+  // Calculer le sign
   const calculatedSign = crypto
     .createHash("md5")
     .update(
@@ -584,17 +600,32 @@ app.post("/cryptomus-callback", async (req, res) => {
     )
     .digest("hex");
 
+  // Log des signs pour comparaison
+  console.log("Sign reçu :", sign);
+  console.log("Sign calculé :", calculatedSign);
+
   if (sign !== calculatedSign) {
     console.error("Sign invalide dans le callback");
     return res.status(400).json({ message: "Sign invalide" });
   }
 
-  // Continuez avec le traitement du webhook
+  // Continuer avec le traitement du webhook
   const { uuid, order_id, status } = data;
+
+  console.log(
+    `Traitement du callback pour order_id: ${order_id}, status: ${status}`
+  );
 
   try {
     // Mettre à jour le statut de l'invoice dans la base de données
-    await Database.updateInvoiceStatus(order_id, status, uuid);
+    const updateResult = await Database.updateInvoiceStatus(
+      order_id,
+      status,
+      uuid
+    );
+    console.log(
+      `Statut de l'invoice mis à jour pour order_id: ${order_id}, résultat: ${updateResult}`
+    );
 
     if (status === "paid") {
       const invoice = await Database.getInvoice(order_id);
@@ -611,25 +642,32 @@ app.post("/cryptomus-callback", async (req, res) => {
 
         if (user) {
           // Mettre à jour l'abonnement de l'utilisateur
-          await Database.updateUserSubscription(
+          const updateCount = await Database.updateUserSubscription(
             stakeUsername,
             invoice.subscription_type,
             subscriptionEnd,
             referralUsername
           );
+          console.log(
+            `Abonnement mis à jour pour l'utilisateur ${stakeUsername}, nombre de documents modifiés: ${updateCount}`
+          );
         } else {
           // Ajouter un nouvel utilisateur
-          await Database.addUser(
+          const insertedId = await Database.addUser(
             stakeUsername,
             invoice.subscription_type,
             new Date(),
             subscriptionEnd,
             referralUsername
           );
+          console.log(
+            `Nouvel utilisateur ajouté: ${stakeUsername}, ID inséré: ${insertedId}`
+          );
         }
 
         res.status(200).send("OK");
       } else {
+        console.error(`Invoice non trouvée pour order_id: ${order_id}`);
         res.status(404).send("Invoice non trouvée");
       }
     } else if (
@@ -637,13 +675,22 @@ app.post("/cryptomus-callback", async (req, res) => {
       status === "failed" ||
       status === "canceled"
     ) {
+      // Log du statut du paiement
+      console.log(`Statut du paiement : ${status} pour order_id: ${order_id}`);
+
       // Remettre à jour le code promo si le paiement n'est pas complété
       const invoice = await Database.getInvoice(order_id);
       if (invoice && invoice.promoCode) {
-        await Database.revertPromoCode(invoice.promoCode);
+        const revertResult = await Database.revertPromoCode(invoice.promoCode);
+        console.log(
+          `Code promo réinitialisé : ${invoice.promoCode}, résultat: ${revertResult}`
+        );
       }
       res.status(200).send(`Statut du paiement : ${status}`);
     } else {
+      console.log(
+        `Statut du paiement non géré : ${status} pour order_id: ${order_id}`
+      );
       res.status(200).send(`Statut du paiement : ${status}`);
     }
   } catch (error) {
