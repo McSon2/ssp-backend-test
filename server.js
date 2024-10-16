@@ -33,18 +33,23 @@ const PORT = process.env.PORT;
 function generateCryptomusSign(requestBody, apiKey) {
   // Convertir les données en JSON avec un ordre de clés stable
   let jsonData = stringify(requestBody);
+  console.log("JSON Data before escaping:", jsonData);
 
   // Échapper les slashes
   jsonData = jsonData.replace(/\\/g, "\\\\").replace(/\//g, "\\/");
+  console.log("JSON Data after escaping:", jsonData);
 
   // Encoder la chaîne JSON en Base64
   const base64Data = Buffer.from(jsonData).toString("base64");
+  console.log("Base64 Data:", base64Data);
 
   // Concaténer la chaîne Base64 avec la clé API
   const dataToSign = base64Data + apiKey;
+  console.log("Data to Sign:", dataToSign);
 
   // Calculer le hachage MD5
   const hash = crypto.createHash("md5").update(dataToSign).digest("hex");
+  console.log("Generated Hash:", hash);
 
   return hash;
 }
@@ -556,12 +561,10 @@ app.post("/create-invoice", async (req, res) => {
     console.error("Erreur lors de la création de l'invoice :", error);
     if (error.response) {
       console.error("Response data:", error.response.data);
-      res
-        .status(500)
-        .json({
-          message: "Erreur interne du serveur.",
-          error: error.response.data,
-        });
+      res.status(500).json({
+        message: "Erreur interne du serveur.",
+        error: error.response.data,
+      });
     } else {
       res.status(500).json({ message: "Erreur interne du serveur." });
     }
