@@ -485,14 +485,6 @@ app.post("/create-invoice", async (req, res) => {
         url_callback: callbackUrl,
       };
 
-      console.log("Request Body:", requestBody);
-      console.log("Generated Sign:", sign);
-      console.log("Headers:", {
-        merchant: CRYPTOMUS_MERCHANT_ID,
-        sign: sign,
-        "Content-Type": "application/json",
-      });
-
       const sign = crypto
         .createHash("md5")
         .update(
@@ -500,6 +492,14 @@ app.post("/create-invoice", async (req, res) => {
             CRYPTOMUS_API_KEY
         )
         .digest("hex");
+
+      console.log("Generated Sign:", sign);
+      console.log("Request Body:", requestBody);
+      console.log("Headers:", {
+        merchant: CRYPTOMUS_MERCHANT_ID,
+        sign: sign,
+        "Content-Type": "application/json",
+      });
 
       const response = await fetch("https://api.cryptomus.com/v1/payment", {
         method: "POST",
