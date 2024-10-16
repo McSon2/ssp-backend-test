@@ -497,10 +497,9 @@ app.post("/create-invoice", async (req, res) => {
       // Préparer le corps de la requête
       const requestBody = {
         amount: amount.toString(),
-        currency: "USD", // Vous pouvez changer cela si vous le souhaitez
+        currency: "USD",
         order_id: orderNumber,
         url_callback: callbackUrl,
-        // Vous pouvez ajouter d'autres paramètres optionnels ici
       };
 
       // Générer le sign
