@@ -559,8 +559,6 @@ app.post("/create-invoice", async (req, res) => {
 
 // Endpoint pour le callback de Cryptomus
 app.post("/cryptomus-callback", async (req, res) => {
-  console.log("Cryptomus callback reçu à :", new Date().toISOString());
-
   const sign = req.body.sign;
 
   if (!sign) {
@@ -570,9 +568,6 @@ app.post("/cryptomus-callback", async (req, res) => {
 
   // Obtenir le corps brut de la requête
   const rawBody = req.rawBody;
-
-  // Log du corps brut (attention aux données sensibles)
-  console.log("Corps brut de la requête :", rawBody);
 
   // Parser le JSON brut
   let data;
@@ -589,9 +584,6 @@ app.post("/cryptomus-callback", async (req, res) => {
   // Supprimer le sign des données pour le calcul
   delete data.sign;
 
-  // Log des données parsées
-  console.log("Données parsées du callback :", data);
-
   // Calculer le sign
   const calculatedSign = crypto
     .createHash("md5")
@@ -599,10 +591,6 @@ app.post("/cryptomus-callback", async (req, res) => {
       Buffer.from(JSON.stringify(data)).toString("base64") + CRYPTOMUS_API_KEY
     )
     .digest("hex");
-
-  // Log des signs pour comparaison
-  console.log("Sign reçu :", sign);
-  console.log("Sign calculé :", calculatedSign);
 
   if (sign !== calculatedSign) {
     console.error("Sign invalide dans le callback");
