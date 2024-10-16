@@ -6,7 +6,6 @@ const bodyParser = require("body-parser");
 const axios = require("axios");
 const { MongoClient, ServerApiVersion } = require("mongodb");
 const crypto = require("crypto");
-const stringify = require("json-stable-stringify");
 
 // Configuration du serveur Express
 const app = express();
