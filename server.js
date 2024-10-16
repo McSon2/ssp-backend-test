@@ -36,8 +36,8 @@ function generateCryptomusSign(requestBody, apiKey) {
   console.log("JSON Data before escaping:", jsonData);
 
   // Échapper les slashes
-  //jsonData = jsonData.replace(/\\/g, "\\\\").replace(/\//g, "\\/");
-  //console.log("JSON Data after escaping:", jsonData);
+  jsonData = jsonData.replace(/\\/g, "\\\\").replace(/\//g, "\\/");
+  console.log("JSON Data after escaping:", jsonData);
 
   // Encoder la chaîne JSON en Base64
   const base64Data = Buffer.from(jsonData).toString("base64");
