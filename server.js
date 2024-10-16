@@ -31,20 +31,12 @@ const PORT = process.env.PORT;
 
 // Fonction pour générer le sign pour Cryptomus
 function generateCryptomusSign(requestBody, apiKey) {
-  // Convertir les données en JSON sans ordre spécifique (l'ordre n'a pas d'importance ici)
   const jsonData = JSON.stringify(requestBody);
-
-  // Pas d'échappement des slashes ici
-
-  // Encoder la chaîne JSON en Base64
   const base64Data = Buffer.from(jsonData).toString("base64");
-
-  // Concaténer la chaîne Base64 avec la clé API
-  const dataToSign = base64Data + apiKey;
-
-  // Calculer le hachage MD5
-  const hash = crypto.createHash("md5").update(dataToSign).digest("hex");
-
+  const hash = crypto
+    .createHash("md5")
+    .update(base64Data + apiKey)
+    .digest("hex");
   return hash;
 }
 
@@ -513,9 +505,9 @@ app.post("/create-invoice", async (req, res) => {
         requestBody,
         {
           headers: {
+            "Content-Type": "application/json",
             merchant: CRYPTOMUS_MERCHANT_ID,
             sign: sign,
-            "Content-Type": "application/json",
           },
         }
       );
@@ -564,43 +556,35 @@ app.post("/create-invoice", async (req, res) => {
   }
 });
 
-// Fonction pour vérifier le sign du callback Cryptomus
-function verifyCryptomusCallback(data, sign, apiKey) {
-  // Convertir les données en JSON avec un ordre de clés stable
-  let jsonData = stringify(data);
-
-  // Échapper les slashes
-  jsonData = jsonData.replace(/\\/g, "\\\\").replace(/\//g, "\\/");
-
-  // Encoder la chaîne JSON en Base64
-  const base64Data = Buffer.from(jsonData).toString("base64");
-
-  // Concaténer la chaîne Base64 avec la clé API
-  const dataToSign = base64Data + apiKey;
-
-  // Calculer le hachage MD5
-  const hash = crypto.createHash("md5").update(dataToSign).digest("hex");
-
-  // Comparer le hachage généré avec le sign
-  return hash === sign;
-}
-
 // Endpoint pour le callback de Cryptomus
 app.post("/cryptomus-callback", async (req, res) => {
-  const data = req.body;
+  const sign = req.body.sign;
 
-  // Extraire le sign du corps de la requête
-  const sign = data.sign;
-  delete data.sign; // Supprimer le sign des données
-
-  // Vérifier le sign
-  const isValid = verifyCryptomusCallback(data, sign, CRYPTOMUS_API_KEY);
-
-  if (!isValid) {
-    console.error("Données de callback invalides");
-    return res.status(422).send("Données de callback invalides");
+  if (!sign) {
+    console.error("Sign manquant dans le callback");
+    return res.status(400).json({ message: "Sign manquant" });
   }
 
+  // Obtenir le corps brut de la requête
+  const rawBody = req.rawBody;
+
+  // Parser le JSON brut
+  const data = JSON.parse(rawBody);
+  delete data.sign;
+
+  const calculatedSign = crypto
+    .createHash("md5")
+    .update(
+      Buffer.from(JSON.stringify(data)).toString("base64") + CRYPTOMUS_API_KEY
+    )
+    .digest("hex");
+
+  if (sign !== calculatedSign) {
+    console.error("Sign invalide dans le callback");
+    return res.status(400).json({ message: "Sign invalide" });
+  }
+
+  // Continuez avec le traitement du webhook
   const { uuid, order_id, status } = data;
 
   try {
