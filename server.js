@@ -373,28 +373,16 @@ app.post("/apply-promo", async (req, res) => {
 function calculateAffiliateDiscount(affiliateNumber) {
   let discount = 0;
 
-  // Affiliés de 1 à 9 : 1% par affilié
+  // Affiliés de 1 à 9 : 5% par affilié
   if (affiliateNumber >= 1) {
     const affiliatesInTier = Math.min(affiliateNumber, 9);
-    discount += affiliatesInTier * 1;
+    discount += affiliatesInTier * 5;
   }
 
-  // Affiliés de 10 à 19 : 2% par affilié
+  // Affiliés de 10 à 29 : 10% par affilié
   if (affiliateNumber >= 10) {
-    const affiliatesInTier = Math.min(affiliateNumber, 19) - 9;
-    discount += affiliatesInTier * 2;
-  }
-
-  // Affiliés de 20 à 29 : 3% par affilié
-  if (affiliateNumber >= 20) {
-    const affiliatesInTier = Math.min(affiliateNumber, 29) - 19;
-    discount += affiliatesInTier * 3;
-  }
-
-  // Affiliés de 30 à 37 : 4% par affilié
-  if (affiliateNumber >= 30) {
-    const affiliatesInTier = Math.min(affiliateNumber, 37) - 29;
-    discount += affiliatesInTier * 4;
+    const affiliatesInTier = Math.min(affiliateNumber, 29) - 9;
+    discount += affiliatesInTier * 10;
   }
 
   return discount;
