@@ -11,6 +11,14 @@ const stringify = require("json-stable-stringify");
 // Configuration du serveur Express
 const app = express();
 
+app.use(
+  express.json({
+    verify: (req, res, buf) => {
+      req.rawBody = buf.toString();
+    },
+  })
+);
+
 // Middleware pour CORS
 app.use((req, res, next) => {
   res.header("Access-Control-Allow-Origin", "*"); // Remplacez '*' par l'URL de votre frontend en production
@@ -28,17 +36,6 @@ const CRYPTOMUS_MERCHANT_ID = process.env.CRYPTOMUS_MERCHANT_ID;
 const MONGODB_URI = process.env.MONGODB_URI;
 const BACKEND_URL = process.env.BACKEND_URL;
 const PORT = process.env.PORT;
-
-// Fonction pour générer le sign pour Cryptomus
-function generateCryptomusSign(requestBody, apiKey) {
-  const jsonData = JSON.stringify(requestBody);
-  const base64Data = Buffer.from(jsonData).toString("base64");
-  const hash = crypto
-    .createHash("md5")
-    .update(base64Data + apiKey)
-    .digest("hex");
-  return hash;
-}
 
 // Montants de base pour les abonnements
 const baseAmounts = {
@@ -488,9 +485,6 @@ app.post("/create-invoice", async (req, res) => {
         url_callback: callbackUrl,
       };
 
-      // Générer le sign
-      const sign = generateCryptomusSign(requestBody, CRYPTOMUS_API_KEY);
-
       console.log("Request Body:", requestBody);
       console.log("Generated Sign:", sign);
       console.log("Headers:", {
@@ -499,21 +493,32 @@ app.post("/create-invoice", async (req, res) => {
         "Content-Type": "application/json",
       });
 
-      // Envoyer la requête à l'API Cryptomus
-      const response = await axios.post(
-        "https://api.cryptomus.com/v1/payment",
-        requestBody,
-        {
-          headers: {
-            "Content-Type": "application/json",
-            merchant: CRYPTOMUS_MERCHANT_ID,
-            sign: sign,
-          },
-        }
-      );
+      const sign = crypto
+        .createHash("md5")
+        .update(
+          Buffer.from(JSON.stringify(requestBody)).toString("base64") +
+            CRYPTOMUS_API_KEY
+        )
+        .digest("hex");
 
-      if (response.data.state === 0) {
-        const invoiceData = response.data.result;
+      const response = await fetch("https://api.cryptomus.com/v1/payment", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          merchant: CRYPTOMUS_MERCHANT_ID,
+          sign: sign,
+        },
+        body: JSON.stringify(requestBody),
+      });
+
+      console.log("response", response);
+
+      const data = await response.json();
+
+      console.log("data", data);
+
+      if (data.data.state === 0) {
+        const invoiceData = data.data.result;
 
         // Enregistrer l'invoice dans la base de données
         await Database.createInvoice(
@@ -544,11 +549,11 @@ app.post("/create-invoice", async (req, res) => {
     }
   } catch (error) {
     console.error("Erreur lors de la création de l'invoice :", error);
-    if (error.response) {
-      console.error("Response data:", error.response.data);
+    if (error.data) {
+      console.error("Response data:", error.data.data);
       res.status(500).json({
         message: "Erreur interne du serveur.",
-        error: error.response.data,
+        error: error.data.data,
       });
     } else {
       res.status(500).json({ message: "Erreur interne du serveur." });
