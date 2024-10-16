@@ -627,7 +627,8 @@ app.post("/cryptomus-callback", async (req, res) => {
       `Statut de l'invoice mis à jour pour order_id: ${order_id}, résultat: ${updateResult}`
     );
 
-    if (status === "paid") {
+    if (status === "paid" || status === "paid_over") {
+      // Traiter les paiements réussis, y compris les paiements en excès
       const invoice = await Database.getInvoice(order_id);
 
       if (invoice) {
@@ -673,9 +674,10 @@ app.post("/cryptomus-callback", async (req, res) => {
     } else if (
       status === "expired" ||
       status === "failed" ||
-      status === "canceled"
+      status === "canceled" ||
+      status === "rejected"
     ) {
-      // Log du statut du paiement
+      // Traiter les paiements échoués ou annulés
       console.log(`Statut du paiement : ${status} pour order_id: ${order_id}`);
 
       // Remettre à jour le code promo si le paiement n'est pas complété
@@ -686,6 +688,13 @@ app.post("/cryptomus-callback", async (req, res) => {
           `Code promo réinitialisé : ${invoice.promoCode}, résultat: ${revertResult}`
         );
       }
+      res.status(200).send(`Statut du paiement : ${status}`);
+    } else if (status === "confirm_check") {
+      // Le paiement est en attente de confirmation
+      console.log(
+        `Paiement en attente de confirmation pour order_id: ${order_id}`
+      );
+      // Vous pouvez décider de ne rien faire ou de mettre à jour l'invoice
       res.status(200).send(`Statut du paiement : ${status}`);
     } else {
       console.log(
