@@ -31,25 +31,19 @@ const PORT = process.env.PORT;
 
 // Fonction pour générer le sign pour Cryptomus
 function generateCryptomusSign(requestBody, apiKey) {
-  // Convertir les données en JSON avec un ordre de clés stable
-  let jsonData = stringify(requestBody);
-  console.log("JSON Data before escaping:", jsonData);
+  // Convertir les données en JSON sans ordre spécifique (l'ordre n'a pas d'importance ici)
+  const jsonData = JSON.stringify(requestBody);
 
-  // Échapper les slashes
-  jsonData = jsonData.replace(/\\/g, "\\\\").replace(/\//g, "\\/");
-  console.log("JSON Data after escaping:", jsonData);
+  // Pas d'échappement des slashes ici
 
   // Encoder la chaîne JSON en Base64
   const base64Data = Buffer.from(jsonData).toString("base64");
-  console.log("Base64 Data:", base64Data);
 
   // Concaténer la chaîne Base64 avec la clé API
   const dataToSign = base64Data + apiKey;
-  console.log("Data to Sign:", dataToSign);
 
   // Calculer le hachage MD5
   const hash = crypto.createHash("md5").update(dataToSign).digest("hex");
-  console.log("Generated Hash:", hash);
 
   return hash;
 }
