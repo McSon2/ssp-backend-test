@@ -6,9 +6,18 @@ const bodyParser = require("body-parser");
 const axios = require("axios");
 const { MongoClient, ServerApiVersion } = require("mongodb");
 const crypto = require("crypto");
+const stringify = require("json-stable-stringify");
 
 // Configuration du serveur Express
 const app = express();
+
+app.use(
+  express.json({
+    verify: (req, res, buf) => {
+      req.rawBody = buf.toString();
+    },
+  })
+);
 
 // Middleware pour CORS
 app.use((req, res, next) => {
@@ -22,33 +31,11 @@ app.use((req, res, next) => {
 app.use(bodyParser.json());
 
 // Configuration des clés API et autres informations sensibles
-const PLISIO_API_KEY = process.env.PLISIO_API_KEY;
-const PLISIO_SECRET_KEY = process.env.PLISIO_SECRET_KEY;
+const CRYPTOMUS_API_KEY = process.env.CRYPTOMUS_API_KEY;
+const CRYPTOMUS_MERCHANT_ID = process.env.CRYPTOMUS_MERCHANT_ID;
 const MONGODB_URI = process.env.MONGODB_URI;
 const BACKEND_URL = process.env.BACKEND_URL;
 const PORT = process.env.PORT;
-
-function verifyCallbackData(data) {
-  if (typeof data === "object" && data.verify_hash && PLISIO_SECRET_KEY) {
-    // Trier les clés alphabétiquement
-    const ordered = Object.keys(data)
-      .sort()
-      .reduce((obj, key) => {
-        if (key !== "verify_hash") {
-          // S'assurer que verify_hash est exclu
-          obj[key] = data[key];
-        }
-        return obj;
-      }, {});
-    const string = JSON.stringify(ordered);
-    const hmac = crypto.createHmac("sha1", PLISIO_SECRET_KEY);
-    hmac.update(string);
-    const hash = hmac.digest("hex");
-
-    return hash === data.verify_hash;
-  }
-  return false;
-}
 
 // Montants de base pour les abonnements
 const baseAmounts = {
@@ -313,7 +300,7 @@ app.post("/verify-user", async (req, res) => {
         // Préparer la réponse
         const response = {
           isValid: true,
-          message: `Your ${typeLabel} subscription is valid until ${subscriptionEnd.toLocaleDateString()}.`,
+          message: `Votre abonnement de ${typeLabel} est valide jusqu'au ${subscriptionEnd.toLocaleDateString()}.`,
           affiliateNumber: affiliateNumber,
           availableTrial: false,
         };
@@ -414,7 +401,7 @@ function calculateAffiliateDiscount(affiliateNumber) {
   return discount;
 }
 
-// Endpoint pour créer une invoice Plisio
+// Endpoint pour créer une invoice Cryptomus
 app.post("/create-invoice", async (req, res) => {
   const {
     stakeUsername,
@@ -449,7 +436,7 @@ app.post("/create-invoice", async (req, res) => {
     // Ajouter la réduction des affiliés
     totalDiscount += discountFromAffiliates;
 
-    // Vérifier si la réduction totale atteint ou dépasse 89%
+    // Vérifier si la réduction totale atteint ou dépasse 90%
     if (totalDiscount >= 90) {
       // Ajouter un mois d'abonnement à l'utilisateur sans créer d'invoice
       const subscriptionEnd = calculateSubscriptionEnd(subscriptionType);
@@ -483,38 +470,59 @@ app.post("/create-invoice", async (req, res) => {
     } else {
       // Calculer le montant après réduction
       amount *= 1 - totalDiscount / 100;
+      amount = parseFloat(amount.toFixed(2)); // Arrondir à deux décimales
 
       const orderNumber = `${stakeUsername}-${Date.now()}`;
 
-      // URL de callback pour Plisio (doit être accessible publiquement)
-      const callbackUrl = `https://${BACKEND_URL}/plisio-callback?json=true`;
+      // URL de callback pour Cryptomus (doit être accessible publiquement)
+      const callbackUrl = `https://${BACKEND_URL}/cryptomus-callback`;
 
-      const response = await axios.get(
-        "https://plisio.net/api/v1/invoices/new",
-        {
-          params: {
-            source_currency: "USD",
-            source_amount: amount,
-            currency: currency,
-            order_number: orderNumber,
-            order_name: `Subscription ${subscriptionType}`,
-            email: "customer@example.com",
-            callback_url: callbackUrl,
-            api_key: PLISIO_API_KEY,
-          },
-        }
-      );
+      // Préparer le corps de la requête
+      const requestBody = {
+        amount: amount.toString(),
+        currency: "USD",
+        order_id: orderNumber,
+        url_callback: callbackUrl,
+      };
 
-      if (response.data.status === "success") {
-        const invoiceData = response.data.data;
+      const sign = crypto
+        .createHash("md5")
+        .update(
+          Buffer.from(JSON.stringify(requestBody)).toString("base64") +
+            CRYPTOMUS_API_KEY
+        )
+        .digest("hex");
+
+      //console.log("Generated Sign:", sign);
+      //console.log("Request Body:", requestBody);
+      //console.log("Headers:", {merchant: CRYPTOMUS_MERCHANT_ID,sign: sign,"Content-Type": "application/json",});
+
+      const response = await fetch("https://api.cryptomus.com/v1/payment", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          merchant: CRYPTOMUS_MERCHANT_ID,
+          sign: sign,
+        },
+        body: JSON.stringify(requestBody),
+      });
+
+      //console.log("response", response);
+
+      const data = await response.json();
+
+      //console.log("data", data);
+
+      if (data.state === 0) {
+        const invoiceData = data.result;
 
         // Enregistrer l'invoice dans la base de données
         await Database.createInvoice(
-          invoiceData.txn_id,
+          invoiceData.uuid,
           orderNumber,
           stakeUsername,
           subscriptionType,
-          invoiceData.invoice_total_sum,
+          amount,
           currency,
           "pending",
           promoCode,
@@ -523,7 +531,7 @@ app.post("/create-invoice", async (req, res) => {
 
         res.json({
           success: true,
-          invoiceUrl: invoiceData.invoice_url,
+          invoiceUrl: invoiceData.url,
         });
       } else {
         if (promoCode) {
@@ -531,37 +539,85 @@ app.post("/create-invoice", async (req, res) => {
         }
         res.json({
           success: false,
-          message: "Échec de la création de l'invoice Plisio.",
+          message: "Échec de la création de l'invoice Cryptomus.",
         });
       }
     }
   } catch (error) {
     console.error("Erreur lors de la création de l'invoice :", error);
-    if (promoCode) {
-      await Database.revertPromoCode(promoCode);
+    if (error.data) {
+      console.error("Response data:", error.data);
+      res.status(500).json({
+        message: "Erreur interne du serveur.",
+        error: error.data,
+      });
+    } else {
+      res.status(500).json({ message: "Erreur interne du serveur." });
     }
-    res.status(500).json({ message: "Erreur interne du serveur." });
   }
 });
 
-// Endpoint pour le callback de Plisio (avec json=true)
-app.post("/plisio-callback", async (req, res) => {
-  const data = req.body;
+// Endpoint pour le callback de Cryptomus
+app.post("/cryptomus-callback", async (req, res) => {
+  const sign = req.body.sign;
 
-  // Vérifier l'authenticité du callback
-  if (!verifyCallbackData(data)) {
-    console.error("Données de callback invalides");
-    return res.status(422).send("Données de callback invalides");
+  if (!sign) {
+    console.error("Sign manquant dans le callback");
+    return res.status(400).json({ message: "Sign manquant" });
   }
 
-  const { txn_id, status, order_number } = data;
+  // Obtenir le corps brut de la requête
+  const rawBody = req.rawBody;
+
+  // Parser le JSON brut
+  let data;
+  try {
+    data = JSON.parse(rawBody);
+  } catch (parseError) {
+    console.error(
+      "Erreur lors du parsing du corps de la requête :",
+      parseError
+    );
+    return res.status(400).json({ message: "Corps de la requête invalide" });
+  }
+
+  // Supprimer le sign des données pour le calcul
+  delete data.sign;
+
+  // Calculer le sign
+  const calculatedSign = crypto
+    .createHash("md5")
+    .update(
+      Buffer.from(JSON.stringify(data)).toString("base64") + CRYPTOMUS_API_KEY
+    )
+    .digest("hex");
+
+  if (sign !== calculatedSign) {
+    console.error("Sign invalide dans le callback");
+    return res.status(400).json({ message: "Sign invalide" });
+  }
+
+  // Continuer avec le traitement du webhook
+  const { uuid, order_id, status } = data;
+
+  console.log(
+    `Traitement du callback pour order_id: ${order_id}, status: ${status}`
+  );
 
   try {
     // Mettre à jour le statut de l'invoice dans la base de données
-    await Database.updateInvoiceStatus(order_number, status, txn_id);
+    const updateResult = await Database.updateInvoiceStatus(
+      order_id,
+      status,
+      uuid
+    );
+    console.log(
+      `Statut de l'invoice mis à jour pour order_id: ${order_id}, résultat: ${updateResult}`
+    );
 
-    if (status === "completed") {
-      const invoice = await Database.getInvoice(order_number);
+    if (status === "paid" || status === "paid_over") {
+      // Traiter les paiements réussis, y compris les paiements en excès
+      const invoice = await Database.getInvoice(order_id);
 
       if (invoice) {
         const stakeUsername = invoice.stake_username;
@@ -575,35 +631,63 @@ app.post("/plisio-callback", async (req, res) => {
 
         if (user) {
           // Mettre à jour l'abonnement de l'utilisateur
-          await Database.updateUserSubscription(
+          const updateCount = await Database.updateUserSubscription(
             stakeUsername,
             invoice.subscription_type,
             subscriptionEnd,
             referralUsername
           );
+          console.log(
+            `Abonnement mis à jour pour l'utilisateur ${stakeUsername}, nombre de documents modifiés: ${updateCount}`
+          );
         } else {
           // Ajouter un nouvel utilisateur
-          await Database.addUser(
+          const insertedId = await Database.addUser(
             stakeUsername,
             invoice.subscription_type,
             new Date(),
             subscriptionEnd,
             referralUsername
           );
+          console.log(
+            `Nouvel utilisateur ajouté: ${stakeUsername}, ID inséré: ${insertedId}`
+          );
         }
 
         res.status(200).send("OK");
       } else {
+        console.error(`Invoice non trouvée pour order_id: ${order_id}`);
         res.status(404).send("Invoice non trouvée");
       }
-    } else if (status === "expired" || status === "cancelled") {
+    } else if (
+      status === "expired" ||
+      status === "failed" ||
+      status === "canceled" ||
+      status === "rejected"
+    ) {
+      // Traiter les paiements échoués ou annulés
+      console.log(`Statut du paiement : ${status} pour order_id: ${order_id}`);
+
       // Remettre à jour le code promo si le paiement n'est pas complété
-      const invoice = await Database.getInvoice(order_number);
+      const invoice = await Database.getInvoice(order_id);
       if (invoice && invoice.promoCode) {
-        await Database.revertPromoCode(invoice.promoCode);
+        const revertResult = await Database.revertPromoCode(invoice.promoCode);
+        console.log(
+          `Code promo réinitialisé : ${invoice.promoCode}, résultat: ${revertResult}`
+        );
       }
       res.status(200).send(`Statut du paiement : ${status}`);
+    } else if (status === "confirm_check") {
+      // Le paiement est en attente de confirmation
+      console.log(
+        `Paiement en attente de confirmation pour order_id: ${order_id}`
+      );
+      // Vous pouvez décider de ne rien faire ou de mettre à jour l'invoice
+      res.status(200).send(`Statut du paiement : ${status}`);
     } else {
+      console.log(
+        `Statut du paiement non géré : ${status} pour order_id: ${order_id}`
+      );
       res.status(200).send(`Statut du paiement : ${status}`);
     }
   } catch (error) {
