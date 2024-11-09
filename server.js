@@ -55,7 +55,7 @@ class DatabaseManager {
         deprecationErrors: true,
       },
     });
-    this.dbName = "ssp";
+    this.dbName = "SSP";
     this.isConnected = false;
   }
 
