@@ -274,12 +274,8 @@ function calculateSubscriptionEnd(subscriptionType) {
 app.post("/verify-user", async (req, res) => {
   const { stakeUsername } = req.body;
 
-  console.log('stakeusername', stakeUsername)
-
   try {
     const user = await Database.getUser(stakeUsername);
-
-    console.log('userDB', user)
 
     if (user) {
       const now = new Date();
