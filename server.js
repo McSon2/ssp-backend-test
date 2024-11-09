@@ -32,7 +32,7 @@ app.use(bodyParser.json());
 // Configuration des clés API et autres informations sensibles
 const CRYPTOMUS_API_KEY = process.env.CRYPTOMUS_API_KEY;
 const CRYPTOMUS_MERCHANT_ID = process.env.CRYPTOMUS_MERCHANT_ID;
-const MONGODB_URI = process.env.MONGODB_URI;
+const MONGODB_URI = process.env.MONGO_URL;
 const BACKEND_URL = process.env.BACKEND_URL;
 const PORT = process.env.PORT;
 
