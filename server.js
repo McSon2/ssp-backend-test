@@ -498,7 +498,7 @@ app.post("/create-invoice", async (req, res) => {
     let amount = baseAmounts[subscriptionType];
 
     // Appliquer la réduction basée sur les affiliés
-    const affiliateNumber = await Database.countValidAffiliates(stakeUsername);
+    let affiliateNumber = await Database.countValidAffiliates(stakeUsername);
     if (stakeUsername === 'mcson') {
       affiliateNumber = 50
     }
