@@ -55,9 +55,7 @@ class DatabaseManager {
         deprecationErrors: true,
       },
       // Options de pool de connexions pour optimiser les performances
-      poolSize: 10, // Ajustez selon vos besoins
-      useNewUrlParser: true,
-      useUnifiedTopology: true,
+      maxPoolSize: 10, // Remplacez poolSize par maxPoolSize
     });
     this.dbName = "SSP";
     this.isConnected = false;
