@@ -485,9 +485,6 @@ app.post("/create-invoice", async (req, res) => {
 
     // Appliquer la réduction basée sur les affiliés
     let affiliateNumber = await Database.countValidAffiliates(stakeUsername);
-    if (stakeUsername === 'mcson') {
-      affiliateNumber = 50
-    }
     const discountFromAffiliates = calculateAffiliateDiscount(affiliateNumber);
 
     // Appliquer la réduction du code promo s'il y en a un
