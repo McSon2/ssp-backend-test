@@ -136,48 +136,34 @@ class DatabaseManager {
     }
   }
 
-  async updateUserSubscription(
-    stakeUsername,
-    subscriptionType,
-    subscriptionEnd,
-    referralUsername
-  ) {
-    await this.connect();
-    console.log(`Mise à jour de l'abonnement pour: ${stakeUsername}`);
-    const session = this.client.startSession();
-    try {
-      let modifiedCount;
-      await session.withTransaction(async () => {
-        // Préparer les champs à mettre à jour
-        const updateFields = {
-          subscription_type: subscriptionType,
-          subscription_end: new Date(subscriptionEnd),
-        };
+  async updateUserSubscription(stakeUsername, subscriptionType, subscriptionEnd, referralUsername) {
+  await this.connect();
+  console.log(`Mise à jour de l'abonnement pour: ${stakeUsername}`);
+  try {
+    const updateFields = {
+      subscription_type: subscriptionType,
+      subscription_end: new Date(subscriptionEnd),
+    };
 
-        // Récupérer l'utilisateur pour vérifier s'il a déjà un referralUsername
-        const user = await this.getUser(stakeUsername);
+    const user = await this.getUser(stakeUsername);
 
-        if (!user.referral_username && referralUsername) {
-          // Mettre à jour referralUsername uniquement s'il n'existe pas déjà
-          updateFields.referral_username = referralUsername;
-        }
-
-        const result = await this.users.updateOne(
-          { stake_username: { $regex: new RegExp(`^${stakeUsername}$`, "i") } },
-          { $set: updateFields },
-          { session }
-        );
-        modifiedCount = result.modifiedCount;
-      });
-      console.log(`Abonnement mis à jour pour ${stakeUsername}, documents modifiés: ${modifiedCount}`);
-      return modifiedCount;
-    } catch (error) {
-      console.error(`Erreur lors de la mise à jour de l'abonnement pour ${stakeUsername}:`, error);
-      throw error;
-    } finally {
-      await session.endSession();
+    if (!user.referral_username && referralUsername) {
+      updateFields.referral_username = referralUsername;
     }
+
+    const result = await this.users.updateOne(
+      { stake_username: { $regex: new RegExp(`^${stakeUsername}$`, "i") } },
+      { $set: updateFields }
+    );
+
+    console.log(`Abonnement mis à jour pour ${stakeUsername}, documents modifiés: ${result.modifiedCount}`);
+    return result.modifiedCount;
+  } catch (error) {
+    console.error(`Erreur lors de la mise à jour de l'abonnement pour ${stakeUsername}:`, error);
+    throw error;
   }
+}
+
 
   async createInvoice(
     txnId,
