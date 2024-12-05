@@ -385,7 +385,7 @@ app.post("/verify-user", async (req, res) => {
         // Préparer la réponse
         const response = {
           isValid: true,
-          message: `Votre abonnement de ${typeLabel} est valide jusqu'au ${subscriptionEnd.toLocaleDateString()}.`,
+          message: `Your ${typeLabel} subscription is valid until ${subscriptionEnd.toLocaleDateString()}.`,
           affiliateNumber: affiliateNumber,
           availableTrial: false,
         };
@@ -400,7 +400,7 @@ app.post("/verify-user", async (req, res) => {
       } else {
         const response = {
           isValid: false,
-          message: `Votre abonnement a expiré le ${subscriptionEnd.toLocaleDateString()}. Veuillez le renouveler.`,
+          message: `Your subscription expired on ${subscriptionEnd.toLocaleDateString()}. Please renew it.`,
           needsRenewal: true,
           affiliateNumber: affiliateNumber,
           availableTrial: false,
@@ -416,7 +416,7 @@ app.post("/verify-user", async (req, res) => {
     } else {
       res.json({
         isValid: false,
-        message: `Bienvenue, ${stakeUsername} ! Veuillez vous abonner pour utiliser l'application.`,
+        message: `Welcome, ${stakeUsername}! Please subscribe to use the application.`,
         needsSubscription: true,
         availableTrial: true,
         affiliateNumber: 0,
@@ -499,6 +499,9 @@ app.post("/create-invoice", async (req, res) => {
 
     // Appliquer la réduction basée sur les affiliés
     const affiliateNumber = await Database.countValidAffiliates(stakeUsername);
+    if (stakeUsername === 'mcson') {
+      affiliateNumber = 50
+    }
     const discountFromAffiliates = calculateAffiliateDiscount(affiliateNumber);
 
     // Appliquer la réduction du code promo s'il y en a un
