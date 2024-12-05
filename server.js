@@ -10,6 +10,7 @@ const crypto = require("crypto");
 // Configuration du serveur Express
 const app = express();
 
+// Middleware pour capturer le corps brut de la requête
 app.use(
   express.json({
     verify: (req, res, buf) => {
@@ -34,7 +35,7 @@ const CRYPTOMUS_API_KEY = process.env.CRYPTOMUS_API_KEY;
 const CRYPTOMUS_MERCHANT_ID = process.env.CRYPTOMUS_MERCHANT_ID;
 const MONGODB_URI = process.env.MONGO_URL;
 const BACKEND_URL = process.env.BACKEND_URL;
-const PORT = process.env.PORT;
+const PORT = process.env.PORT || 3000;
 
 // Montants de base pour les abonnements
 const baseAmounts = {
@@ -47,13 +48,16 @@ const baseAmounts = {
 // Classe DatabaseManager pour gérer la base de données
 class DatabaseManager {
   constructor() {
-    const uri = MONGODB_URI;
-    this.client = new MongoClient(uri, {
+    this.client = new MongoClient(MONGODB_URI, {
       serverApi: {
         version: ServerApiVersion.v1,
         strict: true,
         deprecationErrors: true,
       },
+      // Options de pool de connexions pour optimiser les performances
+      poolSize: 10, // Ajustez selon vos besoins
+      useNewUrlParser: true,
+      useUnifiedTopology: true,
     });
     this.dbName = "SSP";
     this.isConnected = false;
@@ -65,17 +69,18 @@ class DatabaseManager {
         await this.client.connect();
         this.isConnected = true;
         console.log("Connecté à MongoDB");
+        this.db = this.client.db(this.dbName);
+        this.users = this.db.collection("users");
+        this.invoices = this.db.collection("invoices");
+        this.promos = this.db.collection("promos");
       } catch (error) {
         console.error("Échec de la connexion à MongoDB", error);
         throw error;
       }
     }
-    this.db = this.client.db(this.dbName);
-    this.users = this.db.collection("users");
-    this.invoices = this.db.collection("invoices");
-    this.promos = this.db.collection("promos");
   }
 
+  // Ajout de logs détaillés pour chaque méthode
   async addUser(
     stakeUsername,
     subscriptionType,
@@ -84,33 +89,53 @@ class DatabaseManager {
     referralUsername
   ) {
     await this.connect();
-    const result = await this.users.insertOne({
-      stake_username: stakeUsername,
-      subscription_type: subscriptionType,
-      subscription_start: new Date(subscriptionStart),
-      subscription_end: new Date(subscriptionEnd),
-      referral_username: referralUsername,
-    });
-    return result.insertedId;
+    console.log(`Ajout de l'utilisateur: ${stakeUsername}`);
+    try {
+      const result = await this.users.insertOne({
+        stake_username: stakeUsername,
+        subscription_type: subscriptionType,
+        subscription_start: new Date(subscriptionStart),
+        subscription_end: new Date(subscriptionEnd),
+        referral_username: referralUsername,
+      });
+      console.log(`Utilisateur ajouté avec l'ID: ${result.insertedId}`);
+      return result.insertedId;
+    } catch (error) {
+      console.error(`Erreur lors de l'ajout de l'utilisateur ${stakeUsername}:`, error);
+      throw error;
+    }
   }
 
   async getUser(stakeUsername) {
     await this.connect();
-    return await this.users.findOne({
-      stake_username: { $regex: new RegExp(`^${stakeUsername}$`, "i") },
-    });
+    console.log(`Recherche de l'utilisateur: ${stakeUsername}`);
+    try {
+      const user = await this.users.findOne({
+        stake_username: { $regex: new RegExp(`^${stakeUsername}$`, "i") },
+      });
+      console.log(`Utilisateur ${stakeUsername} ${user ? "trouvé" : "non trouvé"}`);
+      return user;
+    } catch (error) {
+      console.error(`Erreur lors de la récupération de l'utilisateur ${stakeUsername}:`, error);
+      throw error;
+    }
   }
 
   async countValidAffiliates(referralUsername) {
     await this.connect();
-    const now = new Date();
-
-    const count = await this.users.countDocuments({
-      referral_username: { $regex: new RegExp(`^${referralUsername}$`, "i") },
-      subscription_end: { $gte: now },
-    });
-
-    return count;
+    console.log(`Comptage des affiliés valides pour: ${referralUsername}`);
+    try {
+      const now = new Date();
+      const count = await this.users.countDocuments({
+        referral_username: { $regex: new RegExp(`^${referralUsername}$`, "i") },
+        subscription_end: { $gte: now },
+      });
+      console.log(`Nombre d'affiliés valides pour ${referralUsername}: ${count}`);
+      return count;
+    } catch (error) {
+      console.error(`Erreur lors du comptage des affiliés pour ${referralUsername}:`, error);
+      throw error;
+    }
   }
 
   async updateUserSubscription(
@@ -120,28 +145,40 @@ class DatabaseManager {
     referralUsername
   ) {
     await this.connect();
+    console.log(`Mise à jour de l'abonnement pour: ${stakeUsername}`);
+    const session = this.client.startSession();
+    try {
+      let modifiedCount;
+      await session.withTransaction(async () => {
+        // Préparer les champs à mettre à jour
+        const updateFields = {
+          subscription_type: subscriptionType,
+          subscription_end: new Date(subscriptionEnd),
+        };
 
-    // Préparer les champs à mettre à jour
-    const updateFields = {
-      subscription_type: subscriptionType,
-      subscription_end: new Date(subscriptionEnd),
-    };
+        // Récupérer l'utilisateur pour vérifier s'il a déjà un referralUsername
+        const user = await this.getUser(stakeUsername);
 
-    // Récupérer l'utilisateur pour vérifier s'il a déjà un referralUsername
-    const user = await this.getUser(stakeUsername);
+        if (!user.referral_username && referralUsername) {
+          // Mettre à jour referralUsername uniquement s'il n'existe pas déjà
+          updateFields.referral_username = referralUsername;
+        }
 
-    if (!user.referral_username && referralUsername) {
-      // Mettre à jour referralUsername uniquement s'il n'existe pas déjà
-      updateFields.referral_username = referralUsername;
+        const result = await this.users.updateOne(
+          { stake_username: { $regex: new RegExp(`^${stakeUsername}$`, "i") } },
+          { $set: updateFields },
+          { session }
+        );
+        modifiedCount = result.modifiedCount;
+      });
+      console.log(`Abonnement mis à jour pour ${stakeUsername}, documents modifiés: ${modifiedCount}`);
+      return modifiedCount;
+    } catch (error) {
+      console.error(`Erreur lors de la mise à jour de l'abonnement pour ${stakeUsername}:`, error);
+      throw error;
+    } finally {
+      await session.endSession();
     }
-
-    const result = await this.users.updateOne(
-      { stake_username: { $regex: new RegExp(`^${stakeUsername}$`, "i") } },
-      {
-        $set: updateFields,
-      }
-    );
-    return result.modifiedCount;
   }
 
   async createInvoice(
@@ -156,96 +193,145 @@ class DatabaseManager {
     referralUsername
   ) {
     await this.connect();
-    const result = await this.invoices.insertOne({
-      txn_id: txnId,
-      order_number: orderNumber,
-      stake_username: stakeUsername,
-      subscription_type: subscriptionType,
-      amount: amount,
-      currency: currency,
-      status: status,
-      promoCode: promoCode,
-      referralUsername: referralUsername,
-      created_at: new Date(),
-    });
-    return result.insertedId;
+    console.log(`Création de l'invoice pour l'utilisateur: ${stakeUsername}, Order Number: ${orderNumber}`);
+    try {
+      const result = await this.invoices.insertOne({
+        txn_id: txnId,
+        order_number: orderNumber,
+        stake_username: stakeUsername,
+        subscription_type: subscriptionType,
+        amount: amount,
+        currency: currency,
+        status: status,
+        promoCode: promoCode,
+        referralUsername: referralUsername,
+        created_at: new Date(),
+      });
+      console.log(`Invoice créée avec l'ID: ${result.insertedId}`);
+      return result.insertedId;
+    } catch (error) {
+      console.error(`Erreur lors de la création de l'invoice pour ${stakeUsername}:`, error);
+      throw error;
+    }
   }
 
   async updateInvoiceStatus(orderNumber, status, txnId) {
     await this.connect();
-    const result = await this.invoices.updateOne(
-      { order_number: orderNumber },
-      {
-        $set: {
-          status: status,
-          txn_id: txnId,
-          updated_at: new Date(),
-        },
-      }
-    );
-    return result.modifiedCount;
+    console.log(`Mise à jour du statut de l'invoice: ${orderNumber} à ${status}`);
+    try {
+      const result = await this.invoices.updateOne(
+        { order_number: orderNumber },
+        {
+          $set: {
+            status: status,
+            txn_id: txnId,
+            updated_at: new Date(),
+          },
+        }
+      );
+      console.log(`Statut de l'invoice ${orderNumber} mis à jour, documents modifiés: ${result.modifiedCount}`);
+      return result.modifiedCount;
+    } catch (error) {
+      console.error(`Erreur lors de la mise à jour du statut de l'invoice ${orderNumber}:`, error);
+      throw error;
+    }
   }
 
   async getInvoice(orderNumber) {
     await this.connect();
-    const invoice = await this.invoices.findOne({ order_number: orderNumber });
-    return invoice;
+    console.log(`Récupération de l'invoice pour l'Order Number: ${orderNumber}`);
+    try {
+      const invoice = await this.invoices.findOne({ order_number: orderNumber });
+      console.log(`Invoice ${orderNumber} ${invoice ? "trouvée" : "non trouvée"}`);
+      return invoice;
+    } catch (error) {
+      console.error(`Erreur lors de la récupération de l'invoice ${orderNumber}:`, error);
+      throw error;
+    }
   }
 
   async verifyPromoCode(promoCode, subscriptionType) {
     await this.connect();
-    const promo = await this.promos.findOne({ code: promoCode });
+    console.log(`Vérification du code promo: ${promoCode} pour l'abonnement: ${subscriptionType}`);
+    try {
+      const promo = await this.promos.findOne({ code: promoCode });
 
-    if (!promo) {
-      return { isValid: false, message: "Code promo invalide." };
+      if (!promo) {
+        console.log(`Code promo invalide: ${promoCode}`);
+        return { isValid: false, message: "Code promo invalide." };
+      }
+
+      const now = new Date();
+      if (now > promo.expirationDate) {
+        console.log(`Code promo expiré: ${promoCode}`);
+        return { isValid: false, message: "Ce code promo a expiré." };
+      }
+
+      if (promo.usageLimit <= 0) {
+        console.log(`Code promo atteint sa limite d'utilisation: ${promoCode}`);
+        return {
+          isValid: false,
+          message: "Ce code promo a atteint sa limite d'utilisation.",
+        };
+      }
+
+      // Vérifier si le code promo s'applique au type d'abonnement sélectionné
+      if (!promo.applicableDurations.includes(subscriptionType)) {
+        console.log(`Code promo non applicable pour le type d'abonnement: ${subscriptionType}`);
+        return {
+          isValid: false,
+          message:
+            "Ce code promo n'est pas applicable pour la durée d'abonnement sélectionnée.",
+        };
+      }
+
+      console.log(`Code promo valide: ${promoCode}, remise: ${promo.discount}`);
+      return { isValid: true, discount: promo.discount };
+    } catch (error) {
+      console.error(`Erreur lors de la vérification du code promo ${promoCode}:`, error);
+      throw error;
     }
-
-    const now = new Date();
-    if (now > promo.expirationDate) {
-      return { isValid: false, message: "Ce code promo a expiré." };
-    }
-
-    if (promo.usageLimit <= 0) {
-      return {
-        isValid: false,
-        message: "Ce code promo a atteint sa limite d'utilisation.",
-      };
-    }
-
-    // Vérifier si le code promo s'applique au type d'abonnement sélectionné
-    if (!promo.applicableDurations.includes(subscriptionType)) {
-      return {
-        isValid: false,
-        message:
-          "Ce code promo n'est pas applicable pour la durée d'abonnement sélectionnée.",
-      };
-    }
-
-    return { isValid: true, discount: promo.discount };
   }
 
   async usePromoCode(promoCode) {
     await this.connect();
-    const result = await this.promos.updateOne(
-      { code: promoCode },
-      { $inc: { usageLimit: -1 } }
-    );
-    return result.modifiedCount === 1;
+    console.log(`Utilisation du code promo: ${promoCode}`);
+    try {
+      const result = await this.promos.updateOne(
+        { code: promoCode },
+        { $inc: { usageLimit: -1 } }
+      );
+      const success = result.modifiedCount === 1;
+      console.log(`Code promo ${promoCode} utilisé: ${success}`);
+      return success;
+    } catch (error) {
+      console.error(`Erreur lors de l'utilisation du code promo ${promoCode}:`, error);
+      throw error;
+    }
   }
 
   async revertPromoCode(promoCode) {
     await this.connect();
-    const result = await this.promos.updateOne(
-      { code: promoCode },
-      { $inc: { usageLimit: 1 } }
-    );
-    return result.modifiedCount === 1;
+    console.log(`Réinitialisation du code promo: ${promoCode}`);
+    try {
+      const result = await this.promos.updateOne(
+        { code: promoCode },
+        { $inc: { usageLimit: 1 } }
+      );
+      const success = result.modifiedCount === 1;
+      console.log(`Code promo ${promoCode} réinitialisé: ${success}`);
+      return success;
+    } catch (error) {
+      console.error(`Erreur lors de la réinitialisation du code promo ${promoCode}:`, error);
+      throw error;
+    }
   }
 
   async close() {
     if (this.isConnected) {
       await this.client.close();
       this.isConnected = false;
+      console.log("Connexion à MongoDB fermée");
     }
   }
 }
@@ -273,6 +359,8 @@ function calculateSubscriptionEnd(subscriptionType) {
 // Endpoint pour vérifier l'utilisateur
 app.post("/verify-user", async (req, res) => {
   const { stakeUsername } = req.body;
+
+  console.log(`Requête de vérification pour l'utilisateur: ${stakeUsername}`);
 
   try {
     const user = await Database.getUser(stakeUsername);
@@ -309,6 +397,7 @@ app.post("/verify-user", async (req, res) => {
           response.referralUsername = user.referral_username;
         }
 
+        console.log(`Abonnement valide pour ${stakeUsername}`);
         res.json(response);
       } else {
         const response = {
@@ -323,6 +412,7 @@ app.post("/verify-user", async (req, res) => {
           response.referralUsername = user.referral_username;
         }
 
+        console.log(`Abonnement expiré pour ${stakeUsername}`);
         res.json(response);
       }
     } else {
@@ -333,6 +423,7 @@ app.post("/verify-user", async (req, res) => {
         availableTrial: true,
         affiliateNumber: 0,
       });
+      console.log(`Nouvel utilisateur détecté: ${stakeUsername}`);
     }
   } catch (error) {
     console.error("Erreur lors de la vérification de l'utilisateur :", error);
@@ -344,6 +435,8 @@ app.post("/verify-user", async (req, res) => {
 app.post("/apply-promo", async (req, res) => {
   const { promoCode, subscriptionType } = req.body;
 
+  console.log(`Requête d'application du code promo: ${promoCode} pour l'abonnement: ${subscriptionType}`);
+
   try {
     const promoResult = await Database.verifyPromoCode(
       promoCode,
@@ -353,12 +446,15 @@ app.post("/apply-promo", async (req, res) => {
       const currentPrices = { ...baseAmounts };
       currentPrices[subscriptionType] *= 1 - promoResult.discount;
 
+      console.log(`Code promo appliqué avec succès: ${promoCode}, remise: ${promoResult.discount}`);
+
       res.json({
         success: true,
         updatedPrices: currentPrices,
         appliedTo: subscriptionType,
       });
     } else {
+      console.log(`Échec de l'application du code promo: ${promoCode}, raison: ${promoResult.message}`);
       res.json({ success: false, message: promoResult.message });
     }
   } catch (error) {
@@ -398,6 +494,8 @@ app.post("/create-invoice", async (req, res) => {
     referralUsername,
   } = req.body;
 
+  console.log(`Requête de création d'invoice pour l'utilisateur: ${stakeUsername}, abonnement: ${subscriptionType}`);
+
   try {
     let amount = baseAmounts[subscriptionType];
 
@@ -416,6 +514,7 @@ app.post("/create-invoice", async (req, res) => {
         totalDiscount += promoResult.discount * 100; // Convertir en pourcentage
         await Database.usePromoCode(promoCode);
       } else {
+        console.log(`Échec de la vérification du code promo: ${promoCode}, raison: ${promoResult.message}`);
         return res.json({ success: false, message: promoResult.message });
       }
     }
@@ -423,10 +522,14 @@ app.post("/create-invoice", async (req, res) => {
     // Ajouter la réduction des affiliés
     totalDiscount += discountFromAffiliates;
 
+    console.log(`Réductions appliquées: Code Promo: ${promoCode || "Aucun"}, Affiliés: ${discountFromAffiliates}%, Total: ${totalDiscount}%`);
+
     // Vérifier si la réduction totale atteint ou dépasse 90%
     if (totalDiscount >= 90) {
       // Ajouter un mois d'abonnement à l'utilisateur sans créer d'invoice
       const subscriptionEnd = calculateSubscriptionEnd(subscriptionType);
+
+      console.log(`Réduction totale >= 90%, mise à jour de l'abonnement pour ${stakeUsername}`);
 
       const user = await Database.getUser(stakeUsername);
 
@@ -480,9 +583,7 @@ app.post("/create-invoice", async (req, res) => {
         )
         .digest("hex");
 
-      //console.log("Generated Sign:", sign);
-      //console.log("Request Body:", requestBody);
-      //console.log("Headers:", {merchant: CRYPTOMUS_MERCHANT_ID,sign: sign,"Content-Type": "application/json",});
+      console.log(`Génération du sign pour Cryptomus: ${sign}`);
 
       const response = await fetch("https://api.cryptomus.com/v1/payment", {
         method: "POST",
@@ -494,11 +595,9 @@ app.post("/create-invoice", async (req, res) => {
         body: JSON.stringify(requestBody),
       });
 
-      //console.log("response", response);
-
       const data = await response.json();
 
-      //console.log("data", data);
+      console.log("Réponse de Cryptomus:", data);
 
       if (data.state === 0) {
         const invoiceData = data.result;
@@ -524,6 +623,7 @@ app.post("/create-invoice", async (req, res) => {
         if (promoCode) {
           await Database.revertPromoCode(promoCode);
         }
+        console.log(`Échec de la création de l'invoice Cryptomus pour ${stakeUsername}`);
         res.json({
           success: false,
           message: "Échec de la création de l'invoice Cryptomus.",
@@ -548,6 +648,8 @@ app.post("/create-invoice", async (req, res) => {
 app.post("/cryptomus-callback", async (req, res) => {
   const sign = req.body.sign;
 
+  console.log(`Requête de callback reçue avec le sign: ${sign}`);
+
   if (!sign) {
     console.error("Sign manquant dans le callback");
     return res.status(400).json({ message: "Sign manquant" });
@@ -560,6 +662,7 @@ app.post("/cryptomus-callback", async (req, res) => {
   let data;
   try {
     data = JSON.parse(rawBody);
+    console.log("Données du callback parseées avec succès");
   } catch (parseError) {
     console.error(
       "Erreur lors du parsing du corps de la requête :",
@@ -578,6 +681,8 @@ app.post("/cryptomus-callback", async (req, res) => {
       Buffer.from(JSON.stringify(data)).toString("base64") + CRYPTOMUS_API_KEY
     )
     .digest("hex");
+
+  console.log(`Sign calculé: ${calculatedSign}, Sign reçu: ${sign}`);
 
   if (sign !== calculatedSign) {
     console.error("Sign invalide dans le callback");
@@ -687,6 +792,8 @@ app.post("/cryptomus-callback", async (req, res) => {
 app.post("/get-adjusted-prices", async (req, res) => {
   const { stakeUsername, subscriptionType, promoCode } = req.body;
 
+  console.log(`Requête de prix ajustés pour l'utilisateur: ${stakeUsername}, abonnement: ${subscriptionType}, code promo: ${promoCode}`);
+
   try {
     // Récupérer le nombre d'affiliés valides
     const affiliateNumber = await Database.countValidAffiliates(stakeUsername);
@@ -704,12 +811,15 @@ app.post("/get-adjusted-prices", async (req, res) => {
       if (promoResult.isValid) {
         totalDiscount += promoResult.discount * 100; // Convertir en pourcentage
       } else {
+        console.log(`Échec de la vérification du code promo: ${promoCode}, raison: ${promoResult.message}`);
         return res.json({ success: false, message: promoResult.message });
       }
     }
 
     // Ajouter la réduction des affiliés
     totalDiscount += discountFromAffiliates;
+
+    console.log(`Réductions calculées: Code Promo: ${promoCode || "Aucun"}, Affiliés: ${discountFromAffiliates}%, Total: ${totalDiscount}%`);
 
     // Calculer les prix ajustés pour chaque type d'abonnement
     const adjustedPrices = {};
@@ -725,6 +835,8 @@ app.post("/get-adjusted-prices", async (req, res) => {
       adjustedPrices,
       affiliateNumber,
     });
+
+    console.log(`Prix ajustés renvoyés pour ${stakeUsername}`);
   } catch (error) {
     console.error("Erreur lors du calcul des prix ajustés :", error);
     res
@@ -737,6 +849,8 @@ app.post("/get-adjusted-prices", async (req, res) => {
 app.post("/request-trial", async (req, res) => {
   const { stakeUsername } = req.body;
 
+  console.log(`Requête de période d'essai pour l'utilisateur: ${stakeUsername}`);
+
   try {
     const user = await Database.getUser(stakeUsername);
 
@@ -747,6 +861,7 @@ app.post("/request-trial", async (req, res) => {
         message:
           "La période d'essai n'est disponible que pour les nouveaux utilisateurs.",
       });
+      console.log(`Période d'essai refusée pour ${stakeUsername}, utilisateur existant`);
     } else {
       // Créer un nouvel utilisateur avec un abonnement d'essai
       const subscriptionStart = new Date();
@@ -766,6 +881,7 @@ app.post("/request-trial", async (req, res) => {
         message:
           "Période d'essai activée. Vous pouvez maintenant utiliser l'application pendant 2 jours.",
       });
+      console.log(`Période d'essai activée pour ${stakeUsername}`);
     }
   } catch (error) {
     console.error("Erreur lors de la demande d'essai :", error);
@@ -783,5 +899,19 @@ app.listen(PORT, async () => {
     );
   } catch (error) {
     console.error("Erreur lors de la connexion à la base de données :", error);
+    process.exit(1); // Arrêter le serveur si la connexion échoue
   }
+});
+
+// Gestion de la fermeture propre de l'application
+process.on("SIGINT", async () => {
+  console.log("Arrêt du serveur...");
+  await Database.close();
+  process.exit(0);
+});
+
+process.on("SIGTERM", async () => {
+  console.log("Arrêt du serveur...");
+  await Database.close();
+  process.exit(0);
 });
