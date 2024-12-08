@@ -1,6 +1,6 @@
 // migration.js
-const { PrismaClient } = require("@prisma/client");
-const fs = require("fs");
+import { PrismaClient } from "@prisma/client";
+import fs from "fs";
 
 const prisma = new PrismaClient();
 
