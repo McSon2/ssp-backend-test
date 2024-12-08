@@ -1,0 +1,21 @@
+{
+  "name": "serveur_backend",
+  "version": "1.0.0",
+  "type": "module",
+  "main": "server.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1",
+    "start": "node server.js"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "dependencies": {
+    "@prisma/client": "^6.0.1",
+    "crypto": "^1.0.1",
+    "express": "^4.21.2",
+    "node-fetch": "^3.3.2",
+    "prisma": "^6.0.1"
+  },
+  "description": ""
+}

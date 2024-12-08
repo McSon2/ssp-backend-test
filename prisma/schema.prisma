@@ -1,0 +1,41 @@
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+model User {
+  id                 Int       @id @default(autoincrement())
+  stake_username     String    @unique
+  subscription_type  String
+  subscription_start DateTime
+  subscription_end   DateTime
+  referral_username  String?
+}
+
+model Invoice {
+  id                Int       @id @default(autoincrement())
+  txn_id            String?
+  order_number      String    @unique
+  stake_username    String
+  subscription_type String
+  amount            Float
+  currency          String
+  status            String
+  promoCode         String?
+  referralUsername  String?
+  created_at        DateTime  @default(now())
+  updated_at        DateTime?
+}
+
+model Promo {
+  id                 Int       @id @default(autoincrement())
+  code               String    @unique
+  discount           Float
+  expirationDate     DateTime
+  usageLimit         Int
+  applicableDurations String[]
+}
